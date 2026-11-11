@@ -1,0 +1,18 @@
+# Local / site-specific - never in the repository
+config.toml
+pi/pi_settings.local.bat
+data/
+backups/
+certs/
+__pycache__/
+*.pyc
+*.zip
+.pytest_cache/
+
+# network recordings (Wireshark) contain real programs and addresses
+*.pcapng
+*.pcap
+
+# FANUC FOCAS libraries are licensed - each site gets them from FANUC / its machine builder
+FOCAS/*
+!FOCAS/README.txt

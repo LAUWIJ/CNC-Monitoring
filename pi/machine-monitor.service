@@ -1,0 +1,12 @@
+[Unit]
+Description=CNC Machine Monitoring
+
+[Service]
+WorkingDirectory=%h/machine-monitoring
+ExecStart=%h/machine-monitoring/.venv/bin/python run.py
+Environment=PYTHONUNBUFFERED=1
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

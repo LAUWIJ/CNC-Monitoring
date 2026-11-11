@@ -1,0 +1,36 @@
+# Demo: four simulated machines, one per control behaviour.
+[server]
+host = "0.0.0.0"
+port = 8080
+database = "data/demo.db"
+
+[defaults]
+poll_interval_s = 1.0
+
+[[machine]]
+id = "dvf5000"
+name = "DVF 5000 (Fanuc sim)"
+control = "simulator"
+flavor = "fanuc"
+seed = 11
+
+[[machine]]
+id = "dmu50"
+name = "DMU 50 (Sinumerik sim)"
+control = "simulator"
+flavor = "siemens"
+seed = 22
+
+[[machine]]
+id = "c42"
+name = "C 42 (TNC 640 sim)"
+control = "simulator"
+flavor = "heidenhain"
+seed = 33
+
+[[machine]]
+id = "old_mill"
+name = "Old mill (name only)"
+control = "simulator"
+flavor = "generic"
+seed = 44

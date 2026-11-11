@@ -1,0 +1,111 @@
+# Copy to config.toml and fill in your machines.
+
+[server]
+host = "0.0.0.0"          # reachable from other PCs on the network
+port = 8080
+database = "data/monitor.db"
+# source_url = "https://..."   # only if you run a CHANGED version: where its source is (AGPL, dashboard footer)
+
+[defaults]
+poll_interval_s  = 1.0    # how often each control is read
+alarms           = true   # read active alarms/messages (shown in the machine detail view only;
+                          # they never change states or cycles). Per machine: alarms = false
+alarm_poll_s     = 5      # how often alarms are read
+# Heidenhain TNC 640/620: after "Copy from control" in the detail view, the machine builder's PLC messages
+# are read live from PLC markers. To switch that off for a machine:  plc_messages = false
+end_grace_s      = 5      # control must stay in RESET this long before a cycle is closed
+                          # (only used when no part counter / program-end / FINISHED signal arrives)
+state_debounce_s = 2      # ignore state blips shorter than this on the timeline
+offline_grace_s  = 120    # a cycle survives network drops shorter than this
+min_run_s        = 3      # cycle start + immediate reset shorter than this is ignored
+count_mdi_as_cycles = false
+# Names that are never taken as the main program (only matters for controls
+# that don't report the main program themselves). Regular expressions.
+subprogram_patterns = [
+  '^O?9\d{3}$',            # Fanuc M/G-code macros O9000-O9999
+  '^L\d+',                 # Siemens L-subprograms
+  '\.SPF$',                # Siemens sub-program files
+  '^CYCLE\d+',             # Siemens cycles
+  'TOOL_?CHANGE|TOOLCHANGE',
+]
+
+# ---------------------------------------------------------------- program transfer
+# The selected machine's view has a "Programs on <machine>" panel: browse the control's folders, fetch
+# programs to the PC, and (only where switched on) send programs to the control.
+# Per machine:   transfer = "send"   browse + fetch + send
+#                (not set)           browse + fetch only (default)
+#                transfer = false    no panel for this machine
+#                transfer_roots = ["//CNC_MEM/USER/PATH1/", "//MEMCARD/"]   override the folders offered
+#                memory_card = "dnc" FANUC with a DNC memory card shown as CF_TEXT in FANUC's Program Transfer
+#                                    Tool (e.g. 0i-D): adds "Memory card" (list/fetch/send/replace) and never
+#                                    opens CF_TEXT as a folder - that crashed a 0i-D. Not needed for //MEMCARD/.
+#                transfer_protect = ['^O[89]\d{3}$']   programs that are never replaced (FANUC default: O8xxx/O9xxx)
+# Always: the selected/running program is never replaced, a replaced program is first copied to
+# data/transfer_backup/<id>/ (limited, see below), every transfer is in the History tab.
+# FANUC: CNC memory + memory card (the card is used for DNC operation from the card).
+# SIEMENS: the OPC UA user needs file system read (and for sending: write) rights on the control.
+[transfer]
+pin = ""          # e.g. "4711": asked once per browser session before sending. Empty = no PIN.
+max_mb = 200      # largest file that can be sent (DNC programs on the memory card can be big)
+# Backups of replaced programs (data/transfer_backup/ on the monitor), cleaned up automatically:
+backup = true         # false = no backup at all
+backup_keep = 3       # versions kept per program
+backup_days = 30      # older backups are deleted
+backup_max_mb = 200   # all machines together; the oldest go first
+
+# ---------------------------------------------------------------- Siemens
+[[machine]]
+id = "m1"
+name = "Machine 1 (Sinumerik)"
+control = "siemens"
+host = "192.168.1.11"
+port = 4840
+username = "monitor"        # OPC UA user configured on the control
+password = "changeme"
+# Encrypted connection. A client certificate is created automatically in certs\
+# the first time; trust it once on the control (OPC UA > Certificates: rejected -> trusted).
+# security = "Basic256Sha256,SignAndEncrypt"
+# Override any BTSS path if your software version differs (check with UaExpert):
+# [machine.nodes]
+# main_program = "/Channel/ProgramInfo/workPNameLong"
+# part_count   = "/Channel/State/actParts"
+# [machine.extra_nodes]     # shown as raw values, e.g. spindle speed
+# spindle_speed = "/Channel/Spindle/actSpeed"
+# Pallet machine: end the cycle at the M60 block (pallet change / waiting for clearance of the
+# outside pallet). The wait is shown as "Waiting for operator" and is not part of the cycle.
+# [machine.cycle_signal]
+# block_regex = '\bM0?60\b'
+# Alternative: a variable the NC program sets (only if the control exposes it over OPC UA):
+# node = "/NC/_N_NC_GUD_SGUD/PROGRAMSTATUS"
+# start = [1000]
+# end = [4001]
+# ignore = [0]
+
+# ------------------------------------------------------------- Heidenhain
+[[machine]]
+id = "m2"
+name = "Machine 2 (TNC 640)"
+control = "heidenhain"
+host = "192.168.1.12"
+port = 19000
+
+# ------------------------------------------------------------------ Fanuc
+[[machine]]
+id = "m3"
+name = "Machine 3 (Fanuc)"
+control = "fanuc"
+host = "192.168.1.13"
+port = 8193
+fwlib_path = "C:/FOCAS2/Fwlib64.dll"   # Fwlib32.dll for 32-bit Python
+part_count_macro = 3901                # 0 = don't read the part counter
+read_sequence_number = false           # true = also show the N-number being executed on the enlarged card (1 extra call per poll)
+o8_digit_program_numbers = false       # true if the control has 8-digit O-numbers
+# extra_subprogram_patterns = ['^O8\d{3}$']   # machine-specific subs
+# Waiting for a robot or the operator (shown separately on the timeline, never counted in
+# the cycle time). program = regex on the program name (main or the sub/macro running now).
+#   action = "end"   the part is done when the wait starts (robot load program between parts)
+#   action = "pause" the wait is inside the cycle (e.g. robot handshake macro), time not counted
+# [[machine.wait]]
+# program = '^O9022$'
+# reason = "robot"          # robot | operator
+# action = "pause"

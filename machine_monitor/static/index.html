@@ -1,0 +1,1530 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Machine Monitoring</title>
+<style>
+:root {
+  color-scheme: light;
+  --bg: #f4f4f2; --surface: #fcfcfb; --border: #e3e2de; --grid: #ecebe7;
+  --text: #0b0b0b; --text2: #52514e; --muted: #85847f;
+  --running: #0ca30c; --setup: #2a78d6; --paused: #fab219; --idle: #d6d5d0;
+  --alarm: #d03b3b; --waiting: #6250d6; --robot: #d55181; --offline: #9c9b96; --cycle: #3d3c39; --run-bar: #2a78d6; --pause-bar: #eda100;
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --bg: #121211; --surface: #1a1a19; --border: #2e2e2b; --grid: #262624;
+    --text: #f0efec; --text2: #c3c2b7; --muted: #8d8c85;
+    --idle: #3a3a37; --waiting: #9085e9; --robot: #e87ba4; --offline: #5d5c57; --cycle: #c3c2b7; --run-bar: #3987e5; --pause-bar: #c98500;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 14px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+header { display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  padding: 14px 24px; background: var(--surface); border-bottom: 1px solid var(--border);
+  position: sticky; top: 0; z-index: 5; }
+h1 { font-size: 18px; margin: 0 12px 0 0; font-weight: 650; }
+h2 { font-size: 15px; margin: 0 0 12px; font-weight: 600; }
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.seg button { border: 0; background: transparent; color: var(--text2); padding: 6px 12px; cursor: pointer; font: inherit; }
+.seg button + button { border-left: 1px solid var(--border); }
+.seg button.on { background: var(--text); color: var(--surface); }
+input[type=search] { width: 280px; }
+input[type=date], input[type=search], select { font: inherit; padding: 5px 8px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--surface); color: var(--text); }
+.spacer { flex: 1; }
+/* period picker: rolling, calendar and custom periods behind one button; arrows step by the period's size */
+.per { position: relative; display: inline-flex; border: 1px solid var(--border); border-radius: 8px; }
+.per > button { border: 0; background: transparent; color: var(--text2); padding: 6px 10px; cursor: pointer; font: inherit; }
+.per > button + button { border-left: 1px solid var(--border); }
+.per > button:disabled { opacity: .35; cursor: default; }
+.per.on #pBtn { background: var(--text); color: var(--surface); }
+.per.on #pBtn b { color: inherit; }
+#pBtn b { font-weight: 600; color: var(--text); }
+.ppanel { position: absolute; top: calc(100% + 6px); left: 0; z-index: 30; background: var(--surface); border: 1px solid var(--border);
+  border-radius: 12px; box-shadow: 0 8px 28px rgba(0,0,0,.18); padding: 14px; display: grid; grid-template-columns: repeat(3, auto); gap: 22px; }
+.ppanel[hidden] { display: none; }
+.ppanel .ph { font-size: 11px; font-weight: 650; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; margin-bottom: 6px; }
+.ppanel div > button[data-p] { display: block; width: 100%; text-align: left; border: 0; background: none; color: var(--text); font: inherit;
+  padding: 5px 8px; border-radius: 6px; cursor: pointer; white-space: nowrap; }
+.ppanel div > button[data-p]:hover { background: var(--grid); }
+.ppanel div > button[data-p].on { background: var(--text); color: var(--surface); }
+.ppanel label { display: flex; justify-content: space-between; gap: 8px; align-items: center; font-size: 13px; margin-bottom: 6px; }
+@media (max-width: 700px) { .ppanel { grid-template-columns: 1fr; } }
+.updated { color: var(--muted); font-size: 12px; }
+main { padding: 20px 24px 40px; display: grid; gap: 20px; }
+.panel { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; }
+
+/* machine cards */
+.card { cursor: pointer; }
+.card:hover { box-shadow: 0 2px 10px rgba(0,0,0,.08); }
+.dh { font-size: 13px; font-weight: 600; color: var(--text2); margin: 0 0 10px; }
+.hbars { display: grid; gap: 7px; }
+.hbar { display: grid; grid-template-columns: minmax(110px, 190px) 1fr auto; align-items: center; gap: 10px; font-size: 13px; }
+.hbar .lab { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: flex; align-items: center; gap: 6px; }
+.hbar .track { height: 14px; background: var(--grid); border-radius: 4px; overflow: hidden; }
+.hbar .fill { height: 100%; border-radius: 0 4px 4px 0; min-width: 2px; }
+.hbar .val { font-variant-numeric: tabular-nums; color: var(--text2); white-space: nowrap; text-align: right; min-width: 120px; }
+.hbar .val b { color: var(--text); }
+.stbox { display: flex; gap: 22px; align-items: center; }
+.stbox #detailStates { flex: 1; min-width: 0; }
+#detailDonut svg { display: block; }
+#detailDonut .big { font-size: 26px; font-weight: 700; fill: var(--text); }
+#detailDonut .small { font-size: 11px; fill: var(--text2); }
+@media (max-width: 700px) { .stbox { flex-direction: column; align-items: stretch; } }
+#detailParts .hbar { grid-template-columns: minmax(150px, 290px) 1fr auto; }
+/* alarms & messages (detail view only, display only) */
+#detailAlarms { margin-top: 22px; border-top: 1px solid var(--grid); padding-top: 16px; }
+.alm-act { display: flex; align-items: baseline; gap: 10px; padding: 8px 12px; margin-bottom: 6px; border-radius: 8px;
+  border: 1px solid var(--border); border-left: 4px solid var(--alarm); background: var(--surface); font-size: 13px; }
+.alm-act .ic { color: var(--alarm); font-weight: 800; }
+.alm-act.msg { border-left-color: var(--paused); }
+.alm-act.msg .ic { color: var(--pause-bar); }
+.alm-act .txt { flex: 1; min-width: 0; }
+.alm-act .since { color: var(--text2); font-size: 12px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.alm-code { font-weight: 650; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.alm-ok { color: var(--text2); font-size: 13px; margin: 0 0 6px; }
+#detailAlarms table { margin-top: 10px; }
+#detailAlarms td.msg { max-width: 460px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#detailAlarms details { margin-top: 10px; }
+#detailAlarms summary { cursor: pointer; color: var(--setup); font-size: 12px; }
+#detailPlc { margin-top: 22px; border-top: 1px solid var(--grid); padding-top: 16px; }
+#plcForm { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 8px 0; }
+#plcForm input { font: inherit; padding: 5px 8px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--surface); color: var(--text); width: 190px; }
+.btn { font: inherit; padding: 5px 12px; border-radius: 8px; border: 1px solid var(--border); cursor: pointer;
+  background: var(--text); color: var(--surface); }
+.btn:disabled { opacity: .5; cursor: default; }
+#plcStatus { font-size: 13px; color: var(--text2); }
+#plcStatus a { color: var(--setup); }
+#plcStatus .bad { color: var(--alarm); }
+#timeline text.name { cursor: pointer; }
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px;
+  border-top: 4px solid var(--c, var(--idle)); }
+.card .top { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+.card .name { font-weight: 650; font-size: 15px; }
+.card .ctrl { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .03em; }
+.chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600;
+  padding: 3px 9px; border-radius: 999px; border: 1px solid var(--border); white-space: nowrap; }
+.chip .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--c); }
+.prog { margin: 12px 0 2px; font-size: 20px; font-weight: 650; font-variant-numeric: tabular-nums;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sub { color: var(--text2); font-size: 12px; min-height: 17px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kpis { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 12px; }
+/* shop-wide summary above the cards (all-machines view) */
+.shop { display: flex; align-items: center; gap: 36px; flex-wrap: wrap; padding: 14px 20px; }
+.shop[hidden] { display: none; }
+.shop .ttl { font-weight: 650; font-size: 15px; }
+.shop .ttl small { display: block; color: var(--muted); font-weight: 400; font-size: 12px; margin-top: 2px; }
+.shop .sk .v { font-size: 26px; font-weight: 650; font-variant-numeric: tabular-nums; line-height: 1.1; }
+.shop .sk .v small { font-size: 14px; color: var(--muted); font-weight: 500; }
+.shop .sk .l { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.shop .sk.main .v { color: var(--running); font-size: 30px; }
+.kpi .v { font-size: 18px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.kpi .l { font-size: 11px; color: var(--muted); }
+.mini { display: flex; height: 8px; border-radius: 4px; overflow: hidden; margin-top: 12px; gap: 2px; background: var(--surface); }
+.err { color: var(--alarm); font-size: 12px; margin-top: 6px; }
+/* single-machine view: card + transfer panel side by side, card shows part progress and mode */
+#topRow.single { display: grid; grid-template-columns: minmax(300px, 380px) minmax(0, 1fr); gap: 14px; align-items: stretch; }
+#topRow.single .cards { grid-template-columns: 1fr; }
+@media (max-width: 900px) { #topRow.single { grid-template-columns: 1fr; } }
+#xfer { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+#xfer[hidden] { display: none; }
+.xhd { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; }
+.xhd h2 { margin: 0; }
+.xtabs button { font: inherit; font-size: 13px; border: 0; background: none; color: var(--muted); padding: 4px 2px; margin-left: 14px;
+  cursor: pointer; border-bottom: 2px solid transparent; }
+.xtabs button.on { color: var(--text); border-bottom-color: var(--text); }
+.xroots { flex-wrap: wrap; align-self: flex-start; }
+.xroots button small { color: var(--muted); margin-left: 4px; }
+.xroots button.na { color: var(--muted); font-style: italic; }
+.xroots button.on small { color: inherit; opacity: .7; }
+.xgrid { display: grid; grid-template-columns: minmax(280px, 1.6fr) minmax(220px, 1fr); gap: 16px; align-items: start; }
+@media (max-width: 1100px) { .xgrid { grid-template-columns: 1fr; } }
+.xpath { display: flex; align-items: center; gap: 6px; font-size: 12px; margin-bottom: 6px; min-width: 0; }
+#xCrumb { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#xCrumb a { color: var(--text2); text-decoration: none; }
+#xCrumb a:hover { text-decoration: underline; }
+.xib { font: inherit; border: 1px solid var(--border); background: var(--surface); color: var(--text2); border-radius: 6px;
+  min-width: 28px; height: 28px; cursor: pointer; }
+.xlist { border: 1px solid var(--grid); border-radius: 10px; padding: 4px; max-height: 340px; overflow: auto; background: var(--bg); }
+.xrow { display: grid; grid-template-columns: 20px minmax(0, 1fr) 64px 82px; gap: 8px; align-items: center; padding: 6px 8px;
+  border-radius: 6px; font-size: 13px; cursor: pointer; }
+.xrow:hover { background: var(--grid); }
+.xrow.sel { background: color-mix(in srgb, var(--setup) 14%, transparent); outline: 1px solid var(--setup); }
+.xrow .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.xrow .r { text-align: right; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.xrow .cm { color: var(--muted); font-size: 11px; margin-left: 6px; }
+.xbadge { font-size: 10px; font-weight: 650; border-radius: 4px; padding: 1px 5px; margin-left: 6px; vertical-align: 1px;
+  background: var(--grid); color: var(--text2); }
+.xbadge.run { background: color-mix(in srgb, var(--running) 20%, transparent); color: var(--text); }
+.xbadge.sel { background: color-mix(in srgb, var(--setup) 20%, transparent); color: var(--text); }
+.xmsg { padding: 14px; color: var(--text2); font-size: 13px; }
+.xmsg.bad { color: var(--alarm); }
+.xright { display: flex; flex-direction: column; gap: 10px; }
+.xdrop { border: 1.5px dashed var(--border); border-radius: 10px; padding: 14px; display: flex; flex-direction: column;
+  align-items: center; gap: 8px; text-align: center; font-size: 12px; }
+.xdrop.over { border-color: var(--setup); background: color-mix(in srgb, var(--setup) 8%, transparent); }
+.xdrop.off { opacity: .6; }
+.xarrow { font-size: 20px; color: var(--setup); line-height: 1; }
+.xjob { font-size: 12px; display: flex; flex-direction: column; gap: 4px; }
+.xjob .pbar { height: 6px; border-radius: 3px; background: var(--grid); overflow: hidden; }
+.xjob .pbar div { height: 100%; background: var(--run-bar); transition: width .3s; }
+.xjob.bad { color: var(--alarm); }
+.xsmall { font-size: 11px; color: var(--muted); margin-bottom: 4px; }
+.xl { display: grid; grid-template-columns: 14px minmax(0, 1fr) auto; gap: 6px; font-size: 12px; align-items: center; }
+.xl b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.xl .up { color: var(--setup); } .xl .dn { color: var(--running); } .xl .bad { color: var(--alarm); }
+#xHist table { width: 100%; }
+.btn.sec { background: var(--surface); color: var(--text); }
+#allBack[hidden] { display: none; }
+#home { color: inherit; text-decoration: none; }
+#about { text-align: center; color: var(--muted); font-size: 12px; padding: 4px 0 22px; }
+#about a { color: inherit; }
+#allBack { padding: 5px 12px; }
+#xDlg { border: 1px solid var(--border); border-radius: 12px; background: var(--surface); color: var(--text); max-width: 460px; padding: 18px 20px; }
+#xDlg::backdrop { background: rgba(0,0,0,.35); }
+#xDlg label[hidden] { display: none; }
+#xDlg label { display: flex; gap: 8px; align-items: center; margin-top: 10px; font-size: 13px; }
+#xDlg input { font: inherit; padding: 5px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); width: 120px; }
+.xdlgb { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+.card .more { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; font-size: 12px; color: var(--text2); }
+.card .more .ln { display: flex; justify-content: space-between; gap: 8px; }
+.card .more b { color: var(--text); font-variant-numeric: tabular-nums; }
+.card .pbar { height: 6px; border-radius: 3px; background: var(--grid); overflow: hidden; }
+.card .pbar div { height: 100%; background: var(--run-bar); }
+.card .pbar.over div { background: var(--pause-bar); }
+.mode { font-size: 11px; font-weight: 650; border-radius: 4px; padding: 1px 6px; background: var(--grid); color: var(--text); }
+/* enlarged card: bigger text so it fills the taller box next to the transfer panel */
+.cards.single .card { padding: 18px 20px; }
+.cards.single .card .name { font-size: 18px; }
+.cards.single .card .ctrl, .cards.single .chip { font-size: 13px; }
+.cards.single .prog { font-size: 28px; margin-top: 16px; }
+.cards.single .sub { font-size: 14px; min-height: 20px; }
+.cards.single .kpi .v { font-size: 26px; }
+.cards.single .kpi .l { font-size: 12px; }
+.cards.single .card .more { font-size: 14px; gap: 8px; margin-top: 14px; }
+.cards.single .card .pbar { height: 10px; border-radius: 5px; }
+.cards.single .mode { font-size: 13px; padding: 2px 8px; }
+.cards.single .mini { height: 10px; }
+.mode.man { background: color-mix(in srgb, var(--paused) 25%, transparent); }
+
+/* legend */
+.legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 12px; color: var(--text2); margin-bottom: 10px; }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.sw { width: 12px; height: 12px; border-radius: 3px; background: var(--c); display: inline-block; }
+
+/* timeline */
+#timeline svg { display: block; width: 100%; }
+#timeline text { fill: var(--text2); font-size: 12px; }
+#timeline .axis text { fill: var(--muted); font-size: 11px; }
+#timeline .name { fill: var(--text); font-weight: 600; }
+#timeline .name.all { cursor: default; font-weight: 700; }
+#timeline line.med { stroke: var(--text); stroke-width: 1.5; stroke-dasharray: 5 4; opacity: .75; pointer-events: none; }
+#timeline text.medl { fill: var(--text2); font-size: 11px; pointer-events: none; }
+
+/* tables */
+table { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+th { text-align: left; color: var(--muted); font-weight: 500; font-size: 12px; padding: 6px 8px;
+  border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--surface); }
+td { padding: 6px 8px; border-bottom: 1px solid var(--grid); }
+td.n, th.n { text-align: right; }
+tbody tr:hover { background: var(--grid); }
+tr.sel { background: var(--grid); }
+#programs tbody tr { cursor: pointer; }
+.scroll { max-height: 420px; overflow: auto; }
+.res { display: inline-flex; align-items: center; gap: 5px; }
+.res i { font-style: normal; font-weight: 700; }
+.row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+@media (max-width: 1100px) { .row2 { grid-template-columns: 1fr; } }
+.hd { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.hd a { color: var(--setup); font-size: 12px; }
+.hint { color: var(--muted); font-size: 12px; }
+
+#tip { position: fixed; pointer-events: none; z-index: 20; background: var(--text); color: var(--surface);
+  padding: 8px 10px; border-radius: 8px; font-size: 12px; line-height: 1.45; display: none; max-width: 320px;
+  box-shadow: 0 4px 14px rgba(0,0,0,.18); }
+#tip b { font-weight: 650; }
+#trend svg { display: block; width: 100%; }
+#trend text { fill: var(--muted); font-size: 11px; }
+</style>
+</head>
+<body>
+<header>
+  <h1><a href="./" id="home" title="All machines">Machine Monitoring</a></h1>
+  <div class="seg" id="ranges">
+    <button data-r="today" class="on">Today</button>
+    <button data-r="8h">Last 8 h</button>
+    <button data-r="24h">Last 24 h</button>
+    <button data-r="7d">Last 7 days</button>
+  </div>
+  <div class="per" id="per">
+    <button type="button" class="pstep" id="pPrev" title="Previous period" aria-label="Previous period">◀</button>
+    <button type="button" id="pBtn" aria-haspopup="true" aria-expanded="false"><span>📅</span> <b id="pLabel">Period</b> ▾</button>
+    <button type="button" class="pstep" id="pNext" title="Next period" aria-label="Next period">▶</button>
+    <div class="ppanel" id="pPanel" hidden>
+      <div><div class="ph">Rolling</div>
+        <button data-p="r7">Last 7 days</button><button data-p="r30">Last 30 days</button>
+        <button data-p="r90">Last 90 days</button><button data-p="r365">Last 12 months</button></div>
+      <div><div class="ph">Calendar</div>
+        <button data-p="cw0">This week</button><button data-p="cw-1">Last week</button>
+        <button data-p="cm0">This month</button><button data-p="cm-1">Last month</button>
+        <button data-p="cq0">This quarter</button><button data-p="cq-1">Last quarter</button>
+        <button data-p="cy0">This year</button><button data-p="cy-1">Last year</button></div>
+      <div><div class="ph">Custom</div>
+        <label>From <input type="date" id="pFrom"></label>
+        <label>To <input type="date" id="pTo"></label>
+        <button type="button" class="btn" id="pApply">Show</button>
+        <div class="updated" style="margin-top:6px">Same date twice = one day</div></div>
+    </div>
+  </div>
+  <select id="machineFilter"><option value="">All machines</option></select>
+  <button type="button" class="btn sec" id="allBack" hidden>← All machines</button>
+  <input type="search" id="search" placeholder="Search part / program (all history)…" autocomplete="off">
+  <div class="spacer"></div>
+  <span class="updated" id="updated"></span>
+</header>
+
+<main>
+  <section class="panel shop" id="shop" hidden></section>
+  <div id="topRow">
+  <section class="cards" id="cards"></section>
+  <section class="panel" id="xfer" hidden>
+    <div class="xhd"><h2 id="xTitle">Programs</h2>
+      <div class="xtabs"><button type="button" class="on" data-xt="files">Machine files</button><button type="button" data-xt="hist">History</button></div></div>
+    <div id="xFiles">
+      <div class="xroots seg" id="xRoots"></div>
+      <div class="xgrid">
+        <div class="xleft">
+          <div class="xpath"><button type="button" class="xib" id="xUp" title="Up one folder" aria-label="Up one folder">‹</button>
+            <span id="xCrumb"></span><span class="spacer"></span><span class="updated" id="xRead"></span>
+            <button type="button" class="xib" id="xRefresh" title="Read the drives and this folder again" aria-label="Refresh">↻</button></div>
+          <div class="xlist" id="xList"><div class="xmsg">Choose a location above.</div></div>
+        </div>
+        <div class="xright">
+          <button type="button" class="btn" id="xFetch" disabled>↓ Fetch selected to PC</button>
+          <div class="xdrop" id="xDrop">
+            <div class="xarrow">↑</div>
+            <div id="xDropTxt">Drop a file here to send it to the control</div>
+            <button type="button" class="btn" id="xChoose">Choose file…</button>
+            <input type="file" id="xFile" hidden multiple>
+          </div>
+          <div id="xJobs"></div>
+          <div class="xlast"><div class="xsmall">Last transfers</div><div id="xLast"></div></div>
+        </div>
+      </div>
+    </div>
+    <div id="xHist" hidden></div>
+  </section>
+  </div>
+  <dialog id="xDlg"><form method="dialog">
+    <h2 id="xDlgTitle">Replace program?</h2>
+    <div id="xDlgBody"></div>
+    <label id="xPinRow" hidden>PIN <input type="password" id="xPin" inputmode="numeric" autocomplete="off"></label>
+    <div class="xdlgb"><button value="cancel" class="btn sec">Cancel</button><button value="ok" class="btn" id="xDlgOk">Replace</button></div>
+  </form></dialog>
+
+  <section class="panel" id="detail" hidden>
+    <div class="hd"><h2 id="detailTitle">Machine</h2></div>
+    <p class="hint" id="detailSub" style="margin:-6px 0 14px"></p>
+    <div class="row2">
+      <div><h3 class="dh">Time per status</h3>
+        <div class="stbox"><div id="detailDonut"></div><div id="detailStates" class="hbars"></div></div></div>
+      <div><h3 class="dh">Parts per program</h3><div id="detailParts" class="hbars"></div></div>
+    </div>
+    <div id="detailAlarms"><h3 class="dh">Alarms &amp; messages</h3><div id="almActive"></div><div id="almBody"></div></div>
+    <div id="detailPlc" hidden><h3 class="dh">PLC message files (one-time copy)</h3>
+      <p class="hint" style="margin:0">Copies the machine builder's PLC message and symbol files from this control once,
+        read-only, to the monitor. They are used to build this machine's list of PLC messages (like "door open"). Best done while the machine is idle.
+        The code number is only used for this login and is not stored.</p>
+      <form id="plcForm" autocomplete="off"><input type="password" id="plcPw" placeholder="PLC code number" autocomplete="new-password">
+        <button class="btn" id="plcBtn" type="submit">Copy from control</button></form>
+      <div id="plcStatus"></div></div>
+  </section>
+
+  <section class="panel" id="searchPanel" hidden>
+    <div class="hd"><h2 id="searchTitle">Search</h2><a href="#" id="searchClose">Close</a></div>
+    <p class="hint" style="margin:-6px 0 10px">Searches every cycle ever recorded, regardless of the date range above. Partial names work, * is a wildcard. Click a row for its full cycle list and trend.</p>
+    <div class="scroll"><table id="searchTable">
+      <thead><tr><th>Machine</th><th>Program</th><th>First made</th><th>Last made</th><th class="n">Done</th>
+        <th class="n">Aborted</th><th class="n">Parts</th><th class="n">Median cycle</th><th class="n">Median last 10</th>
+        <th class="n">Fastest</th><th class="n">Slowest</th></tr></thead>
+      <tbody></tbody></table></div>
+    <div id="searchCycles" hidden>
+      <div class="hd" style="margin-top:18px"><h2 id="searchCyclesTitle"></h2><a id="searchCsv" href="#">Export CSV</a></div>
+      <div class="scroll"><table>
+        <thead><tr><th>Machine</th><th>Program</th><th>Start</th><th>End</th><th class="n">Cycle time</th>
+          <th class="n">Running</th><th class="n">Paused</th><th class="n" title="Waiting for robot/operator inside the cycle - not counted in the cycle time">Waiting</th><th>Result</th><th>Ended by</th><th>Sub-programs (time)</th></tr></thead>
+        <tbody id="searchCycleRows"></tbody></table></div>
+    </div>
+  </section>
+
+  <section class="panel" id="timeline">
+    <div class="hd"><h2>Running / stationary timeline</h2>
+      <span class="hint" id="tlHint">Upper bar: machine state · lower bar: part cycles (dark = completed, red = aborted)</span></div>
+    <div class="legend" id="legend"></div>
+    <div id="tl"></div>
+  </section>
+
+  <div class="row2">
+    <section class="panel">
+      <div class="hd"><h2>Cycle times per program</h2><span class="hint">Click a row for the trend</span></div>
+      <div class="scroll"><table id="programs">
+        <thead><tr><th>Machine</th><th>Program</th><th class="n">Done</th><th class="n">Aborted</th>
+          <th class="n">Median cycle</th><th class="n">Fastest</th><th class="n">Slowest</th><th class="n">Avg cutting</th></tr></thead>
+        <tbody></tbody></table></div>
+    </section>
+    <section class="panel" id="trend">
+      <div class="hd"><h2 id="trendTitle">Cycle time trend</h2><span class="hint" id="trendHint">Select a program</span></div>
+      <div class="legend"><span><i class="sw" style="--c:var(--run-bar)"></i>Running</span>
+        <span><i class="sw" style="--c:var(--pause-bar)"></i>Paused / alarm</span>
+        <span><svg width="18" height="10"><line x1="0" y1="5" x2="18" y2="5" stroke="var(--text2)" stroke-dasharray="4 3" stroke-width="1.5"/></svg>Median</span></div>
+      <div id="trendChart"></div>
+    </section>
+  </div>
+
+  <section class="panel">
+    <div class="hd"><h2>Cycle log</h2><a id="csv" href="#">Export CSV</a></div>
+    <div class="scroll"><table id="cycles">
+      <thead><tr><th>Machine</th><th>Program</th><th>Start</th><th>End</th><th class="n">Cycle time</th>
+        <th class="n">Running</th><th class="n">Paused</th><th class="n" title="Waiting for robot/operator inside the cycle - not counted in the cycle time">Waiting</th><th>Result</th><th>Ended by</th><th>Sub-programs (time)</th></tr></thead>
+      <tbody></tbody></table></div>
+  </section>
+</main>
+<footer id="about"></footer>
+<div id="tip"></div>
+
+<script>
+const STATES = {
+  RUNNING: { label: "Running",  c: "var(--running)", icon: "▶" },
+  SETUP:   { label: "Setup / MDI", c: "var(--setup)", icon: "✎" },
+  PAUSED:  { label: "Paused",   c: "var(--paused)",  icon: "❚❚" },
+  WAITING: { label: "Waiting for operator", c: "var(--waiting)", icon: "⧗" },
+  WAIT_ROBOT: { label: "Waiting for robot", c: "var(--robot)", icon: "⚙" },
+  IDLE:    { label: "Stationary", c: "var(--idle)",  icon: "■" },
+  ALARM:   { label: "Alarm",    c: "var(--alarm)",   icon: "!" },
+  OFFLINE: { label: "Offline",  c: "var(--offline)", icon: "✕" },
+};
+const REASONS = { ROBOT_WAIT: "Robot wait started", OPERATOR_WAIT: "Operator wait started", END_MARKER: "End marker (program)", PART_COUNTER: "Part counter", PROGRAM_END: "Program end (M30)", FINISHED: "Program finished",
+  RESET: "Reset", CANCELLED: "Cancelled", PROGRAM_CHANGED: "Program changed", CONNECTION_LOST: "Connection lost" };
+const $ = (s) => document.querySelector(s);
+let range = "today", machines = [], selProgram = null, overview = null, trendAll = false, searchSel = null;
+const fmtDate = (t) => new Date(t * 1000).toLocaleString("nl-NL", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
+
+const fmtDur = (s) => {
+  if (s == null || isNaN(s)) return "–";
+  s = Math.round(s);
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+  return h ? `${h}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}` : `${m}:${String(sec).padStart(2, "0")}`;
+};
+const fmtTime = (t) => new Date(t * 1000).toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+const fmtDT = (t) => new Date(t * 1000).toLocaleString("nl-NL", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+// The browser's clock may differ from the monitor PC's clock (another PC, no time sync).
+// All "now" calculations use the server clock: offset measured at every /api/overview call.
+let clockOffset = 0;
+const nowS = () => Date.now() / 1000 + clockOffset;
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+// ---- period: the quick buttons (range) or a period from the picker (per).
+// per = null | {k:"r", days} rolling whole days incl. today | {k:"c", u:"w|m|q|y", s:Date} calendar
+//       | {k:"d", a:Date, b:Date} custom days a..b inclusive (a == b: one day)
+let per = null;
+const day0 = (d) => { const x = new Date(d); x.setHours(0, 0, 0, 0); return x; };
+const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
+const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+const parseYmd = (t) => { const [y, m, d] = t.split("-").map(Number); return new Date(y, m - 1, d); };
+function calStart(u, d) {
+  const x = day0(d);
+  if (u === "w") return addDays(x, -((x.getDay() + 6) % 7));                 // Monday
+  if (u === "m") return new Date(x.getFullYear(), x.getMonth(), 1);
+  if (u === "q") return new Date(x.getFullYear(), Math.floor(x.getMonth() / 3) * 3, 1);
+  return new Date(x.getFullYear(), 0, 1);
+}
+function calShift(u, s, n) {
+  if (u === "w") return addDays(s, 7 * n);
+  if (u === "m") return new Date(s.getFullYear(), s.getMonth() + n, 1);
+  if (u === "q") return new Date(s.getFullYear(), s.getMonth() + 3 * n, 1);
+  return new Date(s.getFullYear() + n, 0, 1);
+}
+function perBounds(p) {          // [start Date, end Date (exclusive)]
+  if (p.k === "r") { const e = addDays(day0(new Date()), 1); return [addDays(e, -p.days), e]; }
+  if (p.k === "c") return [p.s, calShift(p.u, p.s, 1)];
+  return [p.a, addDays(p.b, 1)];
+}
+function isoWeek(d) {
+  const t = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  t.setUTCDate(t.getUTCDate() + 4 - (t.getUTCDay() || 7));
+  return [t.getUTCFullYear(), Math.ceil(((t - Date.UTC(t.getUTCFullYear(), 0, 1)) / 86400000 + 1) / 7)];
+}
+function perLabel(p) {
+  if (!p) return "Period";
+  if (p.k === "r") return p.days === 365 ? "Last 12 months" : `Last ${p.days} days`;
+  const L = (d, o) => d.toLocaleDateString("en-GB", o);
+  if (p.k === "c") {
+    if (p.u === "w") { const [y, w] = isoWeek(p.s); return `Week ${w} · ${y}`; }
+    if (p.u === "m") return L(p.s, { month: "long", year: "numeric" });
+    if (p.u === "q") return `Q${Math.floor(p.s.getMonth() / 3) + 1} ${p.s.getFullYear()}`;
+    return String(p.s.getFullYear());
+  }
+  if (+p.a === +p.b) return L(p.a, { weekday: "short", day: "numeric", month: "short", year: "numeric" });
+  return `${L(p.a, { day: "numeric", month: "short" })} – ${L(p.b, { day: "numeric", month: "short", year: "numeric" })}`;
+}
+// URL form, so a period can be bookmarked or put on a shop-floor screen
+function perKey(p) {
+  if (!p) return range;
+  if (p.k === "r") return `last-${p.days}d`;
+  if (p.k === "c") return p.u === "w" ? `week-${ymd(p.s)}` : p.u === "m" ? ymd(p.s).slice(0, 7)
+    : p.u === "q" ? `${p.s.getFullYear()}-Q${Math.floor(p.s.getMonth() / 3) + 1}` : String(p.s.getFullYear());
+  return +p.a === +p.b ? ymd(p.a) : `${ymd(p.a)}_${ymd(p.b)}`;
+}
+function perParse(t) {
+  let m;
+  if (["today", "8h", "24h", "7d"].includes(t)) return { range: t };
+  if ((m = t.match(/^last-(\d+)d$/))) return { per: { k: "r", days: Math.min(3660, +m[1]) } };
+  if ((m = t.match(/^week-(\d{4}-\d\d-\d\d)$/))) return { per: { k: "c", u: "w", s: calStart("w", parseYmd(m[1])) } };
+  if ((m = t.match(/^(\d{4})-Q([1-4])$/))) return { per: { k: "c", u: "q", s: new Date(+m[1], 3 * (+m[2] - 1), 1) } };
+  if ((m = t.match(/^(\d{4})-(\d\d)$/))) return { per: { k: "c", u: "m", s: new Date(+m[1], +m[2] - 1, 1) } };
+  if ((m = t.match(/^(\d{4})$/))) return { per: { k: "c", u: "y", s: new Date(+m[1], 0, 1) } };
+  if ((m = t.match(/^(\d{4}-\d\d-\d\d)(?:_(\d{4}-\d\d-\d\d))?$/))) {
+    let a = parseYmd(m[1]), b = parseYmd(m[2] || m[1]);
+    if (b < a) [a, b] = [b, a];
+    return { per: { k: "d", a, b } };
+  }
+  return null;
+}
+function window_() {
+  const now = nowS();
+  if (per) {
+    const [s, e] = perBounds(per).map((d) => d.getTime() / 1000);
+    return [s, Math.max(s, Math.min(e, now)), e];
+  }
+  if (range === "8h") return [now - 8 * 3600, now, now];
+  if (range === "24h") return [now - 86400, now, now];
+  if (range === "7d") return [now - 7 * 86400, now, now];
+  const m = new Date(); m.setHours(0, 0, 0, 0);
+  const s = m.getTime() / 1000; return [s, now, s + 86400];
+}
+const qs = (extra = {}) => {
+  const [a, b] = window_();
+  const p = new URLSearchParams({ from: a, to: b, ...extra });
+  const mf = $("#machineFilter").value; if (mf) p.set("machine", mf);
+  return p.toString();
+};
+const api = (path, extra) => fetch(`/api/${path}?${qs(extra)}`).then((r) => r.json());
+
+// ------------------------------------------------------------------ legend
+$("#legend").innerHTML = Object.values(STATES).map((s) => `<span><i class="sw" style="--c:${s.c}"></i>${s.label}</span>`).join("");
+
+// ------------------------------------------------------------------ cards
+// A machine that is switched off / unplugged is normal, not a fault: no red text for that.
+// Red is only for problems someone has to fix (login, rights, missing library or option).
+function isUnreachable(err) {
+  return /timed? ?out|timeout|refused|unreachable|no route|host is down|(errno|winerror) ?(110|111|112|113|10050|10051|10054|10060|10061|10064|10065)|connection attempt failed|\(-16\)|no answer from the cnc|connection (lost|reset|closed|aborted)|not connected|broken pipe|could not connect|socket|eof|disconnected/i.test(err || "");
+}
+function problemText(err) {
+  if (/BadUserAccessDenied|access denied/i.test(err)) return "Login refused - check user / password / rights";
+  if (/BadSecurity|Certificate/i.test(err)) return "Certificate not trusted on the control";
+  if (/cannot load FOCAS|EW_NODLL|-15/i.test(err)) return "FANUC library missing or wrong 32/64-bit";
+  if (/DNC option|no data from control/i.test(err)) return "No status from the control - DNC option active?";
+  if (/not installed/i.test(err)) return err.replace(/^(connect|read): /, "");
+  return err.replace(/^(connect|read): /, "").slice(0, 90);
+}
+function fmtSince(t) {
+  if (!t) return "–";
+  const d = new Date(t * 1000), today = new Date();
+  const hm = d.toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit" });
+  if (d.toDateString() === today.toDateString()) return hm;
+  const y = new Date(today); y.setDate(today.getDate() - 1);
+  if (d.toDateString() === y.toDateString()) return "yesterday " + hm;
+  return d.toLocaleDateString("nl-NL", { weekday: "short", day: "numeric", month: "numeric" }) + " " + hm;
+}
+// shop-wide numbers for the selected period (all-machines view only)
+function renderShop(ms, mf) {
+  const el = $("#shop");
+  el.hidden = !!mf || ms.length < 2;
+  if (el.hidden) return;
+  let run = 0, all = 0, off = 0, parts = 0, aborted = 0, now = 0;
+  ms.forEach((m) => {
+    const u = m.utilization || {};
+    const t = Object.values(u).reduce((x, y) => x + y, 0);
+    run += u.RUNNING || 0; all += t; off += u.OFFLINE || 0;
+    parts += m.parts || 0; aborted += m.aborted || 0;
+    if (!m.stale && (m.live || {}).state === "RUNNING") now++;
+  });
+  const on = all - off;
+  const pOn = on > 0 ? Math.round(100 * run / on) : 0, pAll = all > 0 ? Math.round(100 * run / all) : 0;
+  const lbl = per ? perLabel(per) : ($("[data-r].on") || {}).textContent || "";
+  el.innerHTML = `
+    <div class="ttl">All machines<small>${esc(lbl)}</small></div>
+    <div class="sk main" title="Running time as a share of the time the machines were switched on (offline left out). Of all elapsed time: ${pAll}%">
+      <div class="v">${pOn}%</div><div class="l">Running · of powered-on time</div></div>
+    <div class="sk" title="Sum of the running time of all machines"><div class="v">${(run / 3600).toFixed(1)} <small>h</small></div><div class="l">Running hours</div></div>
+    <div class="sk"><div class="v">${parts}</div><div class="l">Parts${aborted ? ` · ${aborted} aborted` : ""}</div></div>
+    <div class="sk" title="Machines running at this moment"><div class="v">${now} <small>/ ${ms.length}</small></div><div class="l">Running now</div></div>`;
+}
+
+function renderCards() {
+  const now = nowS();
+  const [a, b] = window_();
+  const mf = $("#machineFilter").value;
+  const ms = overview.machines.filter((m) => !mf || m.id === mf);
+  renderShop(ms, mf);
+  $("#cards").innerHTML = ms.map((m) => {
+    const L = m.live || {};
+    const st = m.stale ? "OFFLINE" : (L.state || "OFFLINE");
+    const S = STATES[st] || STATES.OFFLINE;
+    const u = m.utilization || {};
+    const total = Object.values(u).reduce((x, y) => x + y, 0) || 1;
+    const runPct = Math.round(100 * (u.RUNNING || 0) / total);
+    const mini = Object.keys(STATES).filter((k) => u[k] > 0)
+      .map((k) => `<div title="${STATES[k].label}: ${fmtDur(u[k])}" style="flex:${u[k]};background:${STATES[k].c}"></div>`).join("");
+    const inCycle = L.cycle_start && !m.stale;
+    const unreachable = !L.error || isUnreachable(L.error);
+    // single view: the progress block below already shows cycle time and "now in", so the line under the
+    // name only keeps what that block doesn't (cycle time when there is no usual time yet)
+    const sub = inCycle
+      ? (mf ? (m.typical_s ? "" : `Cycle ${fmtDur(now - L.cycle_start - (L.cycle_wait_s || 0))}`)
+        : `Cycle ${fmtDur(now - L.cycle_start - (L.cycle_wait_s || 0))}${L.current_program && L.current_program !== L.program ? ` · now in ${esc(L.current_program)}` : ""}`)
+      : st === "OFFLINE"
+        ? (m.stale && !L.error ? "No data from the monitor" : `Switched off or not reachable since ${fmtSince(L.state_since)}`)
+        : `${S.label} for ${fmtDur(now - (L.state_since || now))}`;
+    return `<div class="card" data-mid="${esc(m.id)}" title="${mf ? "Click again to show all machines" : "Show details for " + esc(m.name)}" style="--c:${S.c}">
+      <div class="top"><div><div class="name">${esc(m.name)}</div><div class="ctrl">${esc(m.control)}</div></div>
+        <span class="chip" style="--c:${S.c}"><span class="dot"></span>${S.icon} ${S.label}</span></div>
+      <div class="prog" title="${esc(L.program)}">${esc(L.program || "—")}</div>
+      ${sub || !mf ? `<div class="sub"${L.error ? ` title="${esc(L.error)}"` : ""}>${sub}</div>` : ""}
+      ${mf ? cardMore(m, L, st, inCycle, now) : ""}
+      <div class="kpis">
+        <div class="kpi"><div class="v">${runPct}%</div><div class="l">Running</div></div>
+        <div class="kpi"><div class="v">${m.parts}</div><div class="l">Parts</div></div>
+        <div class="kpi"><div class="v">${m.aborted}</div><div class="l">Aborted</div></div>
+      </div>
+      <div class="mini">${mini}</div>
+      ${L.error && !unreachable ? `<div class="err" title="${esc(L.error)}">⚠ ${esc(problemText(L.error))}</div>` : ""}
+    </div>`;
+  }).join("");
+  const single = !!(mf && ms.length);
+  $("#allBack").hidden = !mf;
+  $("#cards").classList.toggle("single", single);
+  $("#topRow").classList.toggle("single", single && !$("#xfer").hidden);
+  xferMachine(single ? ms[0] : null);
+}
+
+// Larger card in the single-machine view: progress of the current part against the usual cycle time of
+// this program (median of its last 10 parts) and what the control is doing right now (mode, sub, line).
+const MODE_LABEL = { AUTO: "AUTO", MDI: "MDI", MANUAL: "JOG", UNKNOWN: "" };
+function cardMore(m, L, st, inCycle, now) {
+  if (st === "OFFLINE") return "";
+  const out = [];
+  const typ = m.typical_s;
+  if (inCycle && typ) {
+    const el = now - L.cycle_start - (L.cycle_wait_s || 0);
+    const over = el > typ;
+    out.push(`<div class="ln"><span>Cycle <b>${fmtDur(el)}</b> of usually ${fmtDur(typ)}</span>
+      <span>${over ? `<b>${fmtDur(el - typ)}</b> longer than usual` : `ready ≈ <b>${fmtSince(now + typ - el)}</b>`}</span></div>
+      <div class="pbar${over ? " over" : ""}"><div style="width:${Math.min(100, 100 * el / typ).toFixed(1)}%"></div></div>`);
+  } else if (inCycle) {
+    out.push(`<div class="ln"><span>First run of this program - no usual time yet</span></div>`);
+  } else if (m.last_part_ts) {
+    out.push(`<div class="ln"><span>Last part <b>${fmtSince(m.last_part_ts)}</b></span>${typ ? `<span>usually ${fmtDur(typ)}</span>` : ""}</div>`);
+  }
+  const mode = MODE_LABEL[L.mode] ?? (L.mode || "");
+  const X = L.extra || {};
+  const line = X.line != null && X.line !== "" ? ` · line ${esc(X.line)}`
+    : X.seq_no ? ` · N${esc(X.seq_no)}`
+    : X.act_block ? ` · <span title="${esc(X.act_block)}">${esc(String(X.act_block).slice(0, 32))}</span>` : "";
+  const sub = L.current_program && L.current_program !== L.program
+    ? `${st === "PAUSED" || st === "WAIT_ROBOT" || st === "WAITING" ? "held in" : "now in"} <b>${esc(L.current_program)}</b>`
+    : (L.program ? "in the main program" : "");
+  if (mode || sub || line)
+    out.push(`<div class="ln" style="justify-content:flex-start;flex-wrap:wrap">${mode ? `<span class="mode${mode === "JOG" || mode === "MDI" ? " man" : ""}">${mode}</span>` : ""}<span>${sub}${line}</span></div>`);
+  return out.length ? `<div class="more">${out.join("")}</div>` : "";
+}
+
+// --------------------------------------------------------------- program transfer (single-machine view)
+const X = { mid: null, info: null, roots: [], root: null, path: null, items: [], sel: new Set(), pin: "", tab: "files", readAt: 0, gen: 0 };
+const xEnc = encodeURIComponent;
+const xSep = (p) => (p.includes("\\") ? "\\" : "/");
+const xJoin = (folder, name) => folder + (/[\\/]$/.test(folder) ? "" : xSep(folder)) + name;
+const fmtSize = (b) => b == null ? "" : b < 1024 ? `${b} B` : b < 1048576 ? `${Math.round(b / 1024)} kB` : `${(b / 1048576).toFixed(1)} MB`;
+const fmtDay = (t) => { if (!t) return ""; const d = new Date(t * 1000);
+  return d.toDateString() === new Date().toDateString() ? d.toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit" })
+    : d.toLocaleDateString("nl-NL", { day: "2-digit", month: "2-digit" }); };
+async function xGet(path, params) {
+  const r = await fetch(`/api/transfer${path}?${new URLSearchParams({ machine: X.mid, ...(params || {}) })}`);
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || r.statusText);
+  return j;
+}
+async function xPost(path, body) {
+  const r = await fetch(`/api/transfer${path}`, { method: "POST", headers: { "Content-Type": "application/json", "X-Transfer-Pin": X.pin },
+    body: JSON.stringify(body) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) { const e = new Error(j.error || r.statusText); e.status = r.status; throw e; }
+  return j;
+}
+
+async function xferMachine(m) {
+  const id = m ? m.id : null;
+  if (id === X.mid) return;
+  const gen = ++X.gen;
+  Object.assign(X, { mid: id, info: null, roots: [], root: null, path: null, items: [], sel: new Set() });
+  $("#xfer").hidden = true;
+  $("#topRow").classList.toggle("single", false);
+  if (!id) return;
+  let info;
+  try { info = await xGet(""); } catch (e) { return; }
+  if (gen !== X.gen || !info.supported) return;
+  X.info = info;
+  $("#xTitle").textContent = `Programs on ${m.name}`;
+  $("#xfer").hidden = false;
+  $("#topRow").classList.add("single");
+  xTab("files");
+  xDropState();
+  xLast();
+  $("#xRoots").innerHTML = ""; $("#xCrumb").textContent = ""; $("#xRead").textContent = "";
+  $("#xList").innerHTML = `<div class="xmsg">Connecting to the control …</div>`;
+  await xLoadRoots(gen, true);
+}
+// The drive list is read again on every refresh: a memory card can be inserted later, and a drive can be
+// briefly unavailable while the machine runs. Drives seen before stay as (dimmed) buttons.
+async function xLoadRoots(gen, open) {
+  let roots;
+  try { roots = await xGet("/roots"); }
+  catch (e) {
+    if (gen === X.gen && open) $("#xList").innerHTML = `<div class="xmsg bad">Cannot read the control's drives right now: ${esc(e.message)}<br>
+      <span class="updated">The control may be busy or switched off - try ↻ in a moment.</span></div>`;
+    return false;
+  }
+  if (gen !== X.gen) return false;
+  X.roots = roots;
+  if (X.root) X.root = roots.find((r) => r.path === X.root.path) || X.root;
+  xDropState();
+  $("#xRoots").innerHTML = roots.map((r, i) => `<button type="button" data-i="${i}" class="${r.available === false ? "na" : ""}"
+    title="${esc(r.path)}${r.default ? " - where the selected program is" : ""}${r.available === false ? " - not available on the control right now (seen before)" : ""}">${esc(r.label)}${
+    r.available === false ? "<small>not available now</small>" : r.note ? `<small>${esc(r.note)}</small>` : ""}</button>`).join("");
+  [...$("#xRoots").children].forEach((b) => b.classList.toggle("on", X.roots[+b.dataset.i] === X.root));
+  if (!open) return true;
+  const first = roots.find((r) => r.default && r.available !== false) || roots.find((r) => r.available !== false);
+  if (first) xOpen(first.path, first);
+  else $("#xList").innerHTML = `<div class="xmsg">The control offers no program folders right now.</div>`;
+  return true;
+}
+function xDropState() {
+  const na = X.root && X.root.available === false;
+  const can = X.info && X.info.send && !na;
+  $("#xDrop").classList.toggle("off", !can);
+  $("#xChoose").disabled = !can;
+  $("#xDropTxt").innerHTML = na ? "This drive is not available on the control right now - press ↻ when it is back"
+    : !can ? 'Sending is switched off for this machine.<br><span class="updated">Turn it on with transfer = "send" in config.toml</span>'
+    : X.path ? `<b>Drop files here to send them to ${esc(X.root && X.path === X.root.path ? X.root.label : X.path)}</b>` : "Choose a location first";
+}
+async function xOpen(path, root) {
+  if (root) X.root = root;
+  X.path = path; X.sel.clear(); xSelUi();
+  [...$("#xRoots").children].forEach((b) => b.classList.toggle("on", X.roots[+b.dataset.i] === X.root));
+  xCrumb(); xDropState();
+  $("#xList").innerHTML = `<div class="xmsg">Reading …</div>`;
+  const mid = X.mid;
+  try {
+    const items = await xGet("/list", { path });
+    if (mid !== X.mid || path !== X.path) return;
+    X.items = items; X.readAt = Date.now() / 1000;
+    $("#xRead").textContent = `read ${fmtDay(X.readAt)}`;
+    xRenderList();
+  } catch (e) {
+    if (mid === X.mid && path === X.path) $("#xList").innerHTML = `<div class="xmsg bad">${esc(e.message)}<br>
+      <span class="updated">${X.root && X.root.available === false ? "This drive is not available on the control right now (card or stick removed, or in use?)."
+        : "The drive may be busy while the machine runs, or was removed."} Try ↻ in a moment.</span></div>`;
+  }
+}
+function xCrumb() {
+  const root = X.root ? X.root.path : "", rest = X.path.slice(root.length);
+  const parts = rest.split(/[\\/]/).filter(Boolean);
+  let acc = root, html = `<a href="#" data-p="${esc(root)}">${esc(X.root ? X.root.label : root)}</a>`;
+  for (const p of parts) { acc = xJoin(acc, p) + xSep(root || "/"); html += ` <span class="updated">›</span> <a href="#" data-p="${esc(acc)}">${esc(p)}</a>`; }
+  $("#xCrumb").innerHTML = html;
+  $("#xUp").disabled = !parts.length;
+}
+function xRenderList() {
+  if (!X.items.length) { $("#xList").innerHTML = `<div class="xmsg">This folder is empty.</div>`; return; }
+  $("#xList").innerHTML = X.items.map((e, i) => e.dir
+    ? `<div class="xrow" data-i="${i}" title="Open folder"><span>📁</span><span class="nm">${esc(e.name)}</span><span></span><span class="r">${fmtDay(e.mtime)}</span></div>`
+    : `<div class="xrow${X.sel.has(e.name) ? " sel" : ""}" data-i="${i}"><input type="checkbox" tabindex="-1" aria-label="Select ${esc(e.name)}"${X.sel.has(e.name) ? " checked" : ""}>
+        <span class="nm" title="${esc(e.name)}${e.comment ? " - " + esc(e.comment) : ""}">${esc(e.name)}${e.in_use === "running" ? '<span class="xbadge run">running</span>' : e.in_use ? '<span class="xbadge sel">selected</span>' : ""}${e.protected ? '<span class="xbadge">protected</span>' : ""}${e.comment ? `<span class="cm">${esc(e.comment)}</span>` : ""}</span>
+        <span class="r">${fmtSize(e.size)}</span><span class="r">${fmtDay(e.mtime)}</span></div>`).join("");
+}
+function xSelUi() {
+  const n = X.sel.size;
+  $("#xFetch").disabled = !n;
+  $("#xFetch").textContent = `↓ Fetch selected to PC${n ? ` (${n})` : ""}`;
+}
+$("#xRoots").onclick = (e) => { const b = e.target.closest("button"); if (b) xOpen(X.roots[+b.dataset.i].path, X.roots[+b.dataset.i]); };
+$("#xCrumb").onclick = (e) => { const a = e.target.closest("a"); if (a) { e.preventDefault(); xOpen(a.dataset.p); } };
+$("#xUp").onclick = () => { const s = xSep(X.path), p = X.path.replace(/[\\/]$/, ""); xOpen(p.slice(0, p.lastIndexOf(s) + 1)); };
+$("#xRefresh").onclick = async () => { await xLoadRoots(X.gen, !X.path); if (X.path) xOpen(X.path); };
+$("#xList").onclick = (e) => {
+  const row = e.target.closest(".xrow"); if (!row) return;
+  const it = X.items[+row.dataset.i];
+  if (it.dir) return xOpen(xJoin(X.path, it.name) + xSep(X.path));
+  X.sel.has(it.name) ? X.sel.delete(it.name) : X.sel.add(it.name);
+  row.classList.toggle("sel", X.sel.has(it.name));
+  row.querySelector("input").checked = X.sel.has(it.name);
+  xSelUi();
+};
+document.querySelectorAll(".xtabs button").forEach((b) => (b.onclick = () => xTab(b.dataset.xt)));
+function xTab(t) {
+  X.tab = t;
+  document.querySelectorAll(".xtabs button").forEach((b) => b.classList.toggle("on", b.dataset.xt === t));
+  $("#xFiles").hidden = t !== "files"; $("#xHist").hidden = t !== "hist";
+  if (t === "hist") xHistory();
+}
+
+// ---- jobs (fetch / send run on the monitor; the page polls their progress)
+function xJobUi(label) {
+  const el = document.createElement("div");
+  el.className = "xjob";
+  el.innerHTML = `<div><b>${esc(label)}</b> <span class="st">starting …</span></div><div class="pbar"><div style="width:0%"></div></div>`;
+  $("#xJobs").prepend(el);
+  return { el, set(msg, frac, bad) {
+    el.querySelector(".st").textContent = msg;
+    el.querySelector(".pbar div").style.width = `${Math.round(100 * Math.min(1, frac || 0))}%`;
+    el.classList.toggle("bad", !!bad);
+  }, done(ms) { setTimeout(() => el.remove(), ms || 6000); } };
+}
+async function xPoll(id, ui) {
+  for (;;) {
+    const j = await fetch(`/api/transfer/job?id=${xEnc(id)}`).then((r) => r.json());
+    if (j.state === "running") { ui.set(j.msg + (j.total ? ` ${Math.round(100 * j.done / j.total)}%` : j.done ? ` ${fmtSize(j.done)}` : ""), j.total ? j.done / j.total : 0.05); }
+    else return j;
+    await new Promise((r) => setTimeout(r, 600));
+  }
+}
+$("#xFetch").onclick = async () => {
+  const names = [...X.sel], folder = X.path, mid = X.mid;
+  X.sel.clear(); xSelUi(); xRenderList();
+  for (const n of names) {
+    const ui = xJobUi(`↓ ${n}`);
+    try {
+      const j0 = await xPost("/fetch", { machine: mid, path: xJoin(folder, n) });
+      const j = await xPoll(j0.id, ui);
+      if (j.state !== "done") { ui.set(j.msg, 1, true); ui.done(15000); continue; }
+      ui.set(`fetched (${fmtSize(j.done)}) - saved to your Downloads`, 1);
+      const a = document.createElement("a");
+      a.href = `/api/transfer/download?id=${xEnc(j.id)}`; a.download = n;
+      document.body.appendChild(a); a.click(); a.remove();
+      ui.done();
+    } catch (e) { ui.set(e.message, 1, true); ui.done(15000); }
+  }
+  xLast();
+};
+
+// ---- send
+function xDialog(title, html, okLabel, needPin) {
+  $("#xDlgTitle").textContent = title;
+  $("#xDlgBody").innerHTML = html;
+  $("#xDlgOk").textContent = okLabel;
+  $("#xPinRow").hidden = !needPin;
+  $("#xPin").value = "";
+  const d = $("#xDlg");
+  return new Promise((res) => {
+    d.onclose = () => res(d.returnValue === "ok");
+    d.returnValue = ""; d.showModal();
+    if (needPin) $("#xPin").focus();
+  });
+}
+function xUpload(file, folder, name, ui) {
+  return new Promise((res, rej) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `/api/transfer/send?${new URLSearchParams({ machine: X.mid, folder, name })}`);
+    xhr.setRequestHeader("Content-Type", "application/octet-stream");
+    xhr.setRequestHeader("X-Transfer-Pin", X.pin);
+    xhr.upload.onprogress = (e) => e.lengthComputable && ui.set(`uploading to the monitor ${Math.round(100 * e.loaded / e.total)}%`, 0.3 * e.loaded / e.total);
+    xhr.onload = () => { let j = {}; try { j = JSON.parse(xhr.responseText); } catch (e) {}
+      xhr.status === 200 ? res(j) : rej(Object.assign(new Error(j.error || xhr.statusText), { status: xhr.status })); };
+    xhr.onerror = () => rej(new Error("upload failed - connection to the monitor lost"));
+    xhr.send(file);
+  });
+}
+async function xSendFiles(files) {
+  if (!X.info || !X.info.send || !X.path) return;
+  const folder = X.path;
+  for (const f of files) {
+    if (f.size > X.info.max_mb * 1048576) { const ui = xJobUi(`↑ ${f.name}`); ui.set(`larger than ${X.info.max_mb} MB`, 1, true); ui.done(15000); continue; }
+    let name = f.name;
+    const existing = X.items.find((e) => !e.dir && e.name.toUpperCase() === name.toUpperCase());
+    if (existing && (existing.in_use || existing.protected)) {
+      const ui = xJobUi(`↑ ${name}`);
+      ui.set(existing.in_use ? `${name} is ${existing.in_use} on the control - not replaced` : `${name} is protected - not replaced`, 1, true);
+      ui.done(15000); continue;
+    }
+    if (X.info.pin && !X.pin) {
+      if (!(await xDialog("Send to the control", `Enter the PIN to send <b>${esc(name)}</b> to ${esc(folder)}.`, "Send", true))) continue;
+      X.pin = $("#xPin").value;
+    }
+    const ui = xJobUi(`↑ ${name}`);
+    try {
+      let j = await xUpload(f, folder, name, ui);
+      j = await xPoll(j.id, { set: (m, fr) => ui.set(m, 0.3 + 0.7 * (fr || 0)) });
+      if (j.state === "exists") {
+        const ex = j.existing || {};
+        const ok = await xDialog(`Replace ${name}?`,
+          `<p><b>${esc(name)}</b> already exists in ${esc(folder)}${ex.size != null ? ` (${fmtSize(ex.size)}${ex.mtime ? `, ${fmtDay(ex.mtime)}` : ""})` : ""}.</p>
+           <p>The current version is first copied to the monitor (kept as a backup), then replaced by your file (${fmtSize(f.size)}).</p>`, "Replace", false);
+        if (!ok) { ui.set("not sent - kept the program on the control", 1); ui.done(); continue; }
+        const j2 = await xPost("/replace", { id: j.id });
+        j = await xPoll(j2.id, { set: (m, fr) => ui.set(m, 0.3 + 0.7 * (fr || 0)) });
+      }
+      if (j.state === "done") { ui.set(j.msg, 1); ui.done(); }
+      else { ui.set(j.msg || "failed", 1, true); ui.done(20000); }
+    } catch (e) {
+      if (e.status === 403) X.pin = "";
+      ui.set(e.message, 1, true); ui.done(20000);
+    }
+  }
+  if (X.mid && X.path === folder) xOpen(folder);
+  xLast();
+}
+$("#xChoose").onclick = () => $("#xFile").click();
+$("#xFile").onchange = () => { const fs = [...$("#xFile").files]; $("#xFile").value = ""; xSendFiles(fs); };
+const xd = $("#xDrop");
+xd.ondragover = (e) => { e.preventDefault(); if (X.info && X.info.send) xd.classList.add("over"); };
+xd.ondragleave = () => xd.classList.remove("over");
+xd.ondrop = (e) => { e.preventDefault(); xd.classList.remove("over"); xSendFiles([...e.dataTransfer.files]); };
+
+// ---- history
+async function xLast() {
+  if (!X.mid) return;
+  let h = [];
+  try { h = await xGet("/history", { limit: 5 }); } catch (e) { return; }
+  $("#xLast").innerHTML = h.length ? h.map((r) => `<div class="xl" title="${esc(r.path)}${r.detail ? " - " + esc(r.detail) : ""}">
+      <span class="${r.result !== "ok" ? "bad" : r.direction === "send" ? "up" : "dn"}">${r.result !== "ok" ? "✕" : r.direction === "send" ? "↑" : "↓"}</span>
+      <b>${esc(r.path.split(/[\\/]/).pop())}</b><span class="updated">${fmtSince(r.ts)}</span></div>`).join("")
+    : `<div class="updated">Nothing sent or fetched yet.</div>`;
+}
+async function xHistory() {
+  let h = [];
+  try { h = await xGet("/history", { limit: 100 }); } catch (e) { $("#xHist").innerHTML = `<div class="xmsg bad">${esc(e.message)}</div>`; return; }
+  $("#xHist").innerHTML = h.length ? `<table><thead><tr><th>When</th><th></th><th>File</th><th>Size</th><th>Result</th></tr></thead><tbody>${
+    h.map((r) => `<tr><td>${fmtDT(r.ts)}</td><td>${r.direction === "send" ? "↑ sent" : "↓ fetched"}</td><td>${esc(r.path)}</td>
+      <td>${fmtSize(r.size)}</td><td>${r.result === "ok" ? (r.detail ? esc(r.detail) : "OK") + (r.backup ? ` <span class="updated">(old version kept: ${esc(r.backup)})</span>` : "")
+        : `<span style="color:var(--alarm)">${r.result === "refused" ? "refused" : "failed"}: ${esc(r.detail || "")}</span>`}</td></tr>`).join("")}</tbody></table>`
+    : `<div class="xmsg">No transfers yet.</div>`;
+}
+
+// --------------------------------------------------------------- timeline
+let tlData = { segs: [], cycles: [], fetched: 0 };
+let curSegs = {};
+// Segments from the last fetch, brought up to date with the live status (refreshed every 3 s):
+// the open segment grows to "now" and a state change shows immediately, not after the next fetch.
+function liveSegs(m, winEnd) {
+  const list = tlData.segs.filter((s) => s.machine_id === m.id).map((s) => ({ ...s }));
+  const now = nowS(), L = m.live || {};
+  if (m.stale || !L.state || winEnd < now - 60) return list;      // not live, or looking at a past day
+  const last = list[list.length - 1];
+  if (last && last.open) last.end = Math.max(last.end, now);       // segment still open on the server
+  const since = L.state_since || now;
+  if (!last || (last.state !== L.state && since >= last.start)) {
+    if (last && last.end > since) last.end = Math.max(last.start, since);
+    list.push({ machine_id: m.id, state: L.state, start: since, end: now, program: L.program });
+  }
+  return list;
+}
+// Periods longer than a week: one stacked bar per day (from the daily summary) instead of every state change.
+const isLong = () => { const [a, , e] = window_(); return e - a > 8 * 86400; };
+var dailyData = {};
+function renderDaily() {
+  const host = $("#tl");
+  const W = host.clientWidth || 900;
+  const [a, , e] = window_();
+  const mf = $("#machineFilter").value;
+  let ms = overview.machines.filter((m) => !mf || m.id === mf);
+  const days = [];
+  for (let d = new Date(a * 1000); d.getTime() / 1000 < e; d.setDate(d.getDate() + 1)) days.push(new Date(d));
+  const key = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  // all-machines view: a combined row on top (sum of all machines per day)
+  let dailyData = window.dailyData;
+  if (!mf && ms.length > 1) {
+    const agg = {};
+    ms.forEach((m) => Object.entries(dailyData[m.id] || {}).forEach(([k, r]) => {
+      const t = agg[k] || (agg[k] = { states: {}, parts: 0, aborted: 0 });
+      Object.entries(r.states).forEach(([st, v]) => { t.states[st] = (t.states[st] || 0) + v; });
+      t.parts += r.parts || 0; t.aborted += r.aborted || 0;
+    }));
+    dailyData = { ...dailyData, __all: agg };
+    ms = [{ id: "__all", name: "All machines", all: true }, ...ms];
+  }
+  const one = !!mf && ms.length === 1;                // single machine: taller bars, patterns easier to see
+  const LBL = 170, PAD = 78, BAR = one ? 140 : 34, ROW = BAR + 12;    // PAD: room for the median label
+  const dw = (W - LBL - PAD) / days.length, gap = dw > 6 ? 2 : dw > 3 ? 1 : 0;
+  const H = ms.length * ROW + 26;
+  const order = Object.keys(STATES);
+  let svg = `<svg viewBox="0 0 ${W} ${H}" height="${H}" xmlns="http://www.w3.org/2000/svg"><g class="axis">`;
+  days.forEach((d, j) => {
+    const first = days.length > 60 ? d.getDate() === 1 : d.getDay() === 1;     // month starts / Mondays
+    if (!first) return;
+    const X = LBL + j * dw;
+    svg += `<line x1="${X}" x2="${X}" y1="0" y2="${H - 22}" stroke="var(--grid)"/>`;
+    svg += `<text x="${X + 2}" y="${H - 6}">${days.length > 60 ? d.toLocaleDateString("nl-NL", { month: "short", year: "2-digit" })
+      : d.toLocaleDateString("nl-NL", { day: "numeric", month: "numeric" })}</text>`;
+  });
+  svg += `</g>`;
+  // median running share per machine over the days it actually ran (weekends / days off don't pull it down)
+  const runShare = (r) => { const tot = r ? Object.values(r.states).reduce((p, q) => p + q, 0) : 0;
+    return tot ? (r.states.RUNNING || 0) / tot : 0; };
+  const medians = ms.map((m) => {
+    const v = days.map((d) => (dailyData[m.id] || {})[key(d)]).filter((r) => r && (r.states.RUNNING || 0) > 0)
+      .map(runShare).sort((p, q) => p - q);
+    return v.length ? (v.length % 2 ? v[(v.length - 1) / 2] : (v[v.length / 2 - 1] + v[v.length / 2]) / 2) : null;
+  });
+  ms.forEach((m, i) => {
+    const y = i * ROW + 6;
+    svg += m.all ? `<text class="name all" x="0" y="${y + 15}">All machines</text>`
+      + `<line x1="0" x2="${W}" y1="${y + BAR + 5.5}" y2="${y + BAR + 5.5}" stroke="var(--border)"/>`
+      : `<text class="name" data-mid="${esc(m.id)}" x="0" y="${y + 15}">${esc(m.name.length > 22 ? m.name.slice(0, 21) + "…" : m.name)}</text>`;
+    const md = dailyData[m.id] || {};
+    days.forEach((d, j) => {
+      const r = md[key(d)], X = LBL + j * dw;
+      const tot = r ? Object.values(r.states).reduce((p, q) => p + q, 0) : 0;
+      if (!tot) { svg += `<rect x="${X}" y="${y}" width="${Math.max(dw - gap, 0.5)}" height="${BAR}" fill="var(--grid)"/>`; return; }
+      let yy = y + BAR;
+      order.forEach((st) => {         // RUNNING at the bottom, so the green "floor" is comparable day to day
+        const v = r.states[st]; if (!v) return;
+        const h = BAR * v / tot; yy -= h;
+        svg += `<rect data-k="d${i}_${j}" x="${X}" y="${yy}" width="${Math.max(dw - gap, 0.5)}" height="${h}" fill="${st === "OFFLINE" ? "url(#hatch)" : STATES[st].c}"/>`;
+      });
+    });
+    const med = medians[i];
+    if (med != null) {
+      const Y = y + BAR - BAR * med, XE = W - PAD;
+      svg += `<line class="med" x1="${LBL}" x2="${XE + 4}" y1="${Y}" y2="${Y}"/>`;
+      svg += `<text class="medl" x="${XE + 8}" y="${Math.max(Y + 4, y + 10)}">median ${Math.round(100 * med)}%</text>`;
+    }
+  });
+  svg += `<defs><pattern id="hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+    <rect width="6" height="6" fill="var(--idle)"/><line x1="0" y1="0" x2="0" y2="6" stroke="var(--offline)" stroke-width="3"/></pattern></defs></svg>`;
+  host.innerHTML = svg;
+  const svgEl = host.querySelector("svg");
+  svgEl.onmousemove = (ev) => {
+    const k = ev.target.getAttribute && ev.target.getAttribute("data-k");
+    if (!k) return hideTip();
+    const [i, j] = k.slice(1).split("_").map(Number), m = ms[i], d = days[j], r = (dailyData[m.id] || {})[key(d)];
+    if (!r) return hideTip();
+    const tot = Object.values(r.states).reduce((p, q) => p + q, 0);
+    showTip(ev, `<b>${esc(m.name)}</b> · ${d.toLocaleDateString("nl-NL", { weekday: "short", day: "numeric", month: "long", year: "numeric" })}<br>` +
+      order.filter((st) => r.states[st]).map((st) => `${STATES[st].label}: ${fmtDur(r.states[st])} (${Math.round(100 * r.states[st] / tot)}%)`).join("<br>") +
+      `<br><b>${r.parts}</b> parts${r.aborted ? ` · ${r.aborted} aborted` : ""}` +
+      (medians[i] != null ? (() => { const d = Math.round(100 * runShare(r)) - Math.round(100 * medians[i]);
+        return `<br>Running ${Math.round(100 * runShare(r))}% · median ${Math.round(100 * medians[i])}% (${d > 0 ? "+" : ""}${d} points)`; })() : ""));
+  };
+  svgEl.onmouseleave = hideTip;
+}
+function renderTimeline() {
+  $("#tlHint").textContent = isLong() ? "One bar per day: share of the day per status · hover a day for hours and parts"
+    : "Upper bar: machine state · lower bar: part cycles (dark = completed, red = aborted)";
+  if (isLong()) return renderDaily();
+  const host = $("#tl");
+  const W = host.clientWidth || 900;
+  const [a, b, axisEnd] = window_();
+  const t0 = a, t1 = Math.max(axisEnd, b);
+  const mf = $("#machineFilter").value;
+  const ms = overview.machines.filter((m) => !mf || m.id === mf);
+  const one = !!mf && ms.length === 1;                // single machine: taller bars, patterns easier to see
+  const LBL = 170, PAD = 8, BAR = one ? 64 : 22, CBAR = one ? 18 : 8, ROW = BAR + CBAR + 16;
+  const x = (t) => LBL + (t - t0) / (t1 - t0) * (W - LBL - PAD);
+  const H = ms.length * ROW + 26;
+  let svg = `<svg viewBox="0 0 ${W} ${H}" height="${H}" xmlns="http://www.w3.org/2000/svg">`;
+  svg += `<defs><pattern id="hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+    <rect width="6" height="6" fill="var(--idle)"/><line x1="0" y1="0" x2="0" y2="6" stroke="var(--offline)" stroke-width="3"/></pattern></defs>`;
+  // axis
+  const span = t1 - t0;
+  const step = span <= 3 * 3600 ? 900 : span <= 10 * 3600 ? 3600 : span <= 26 * 3600 ? 7200 : 86400;
+  const base = new Date(t0 * 1000); base.setHours(0, 0, 0, 0);
+  let first = base.getTime() / 1000; while (first < t0) first += step;
+  svg += `<g class="axis">`;
+  for (let t = first; t <= t1; t += step) {
+    const X = x(t);
+    svg += `<line x1="${X}" x2="${X}" y1="0" y2="${H - 22}" stroke="var(--grid)"/>`;
+    const d = new Date(t * 1000);
+    const lab = step >= 86400 ? d.toLocaleDateString("nl-NL", { weekday: "short", day: "numeric", month: "numeric" })
+      : d.toLocaleTimeString("nl-NL", { hour: "2-digit", minute: "2-digit" });
+    svg += `<text x="${X}" y="${H - 6}" text-anchor="middle">${lab}</text>`;
+  }
+  svg += `</g>`;
+  ms.forEach((m, i) => {
+    const y = i * ROW + 6;
+    svg += `<text class="name" data-mid="${esc(m.id)}" x="0" y="${y + 15}">${esc(m.name.length > 22 ? m.name.slice(0, 21) + "…" : m.name)}</text>`;
+    svg += `<rect x="${LBL}" y="${y}" width="${x(b) - LBL}" height="${BAR}" fill="var(--grid)" rx="3"/>`;
+    curSegs[m.id] = liveSegs(m, b);
+    curSegs[m.id].forEach((s, k) => {
+      const X1 = x(Math.max(s.start, t0)), X2 = x(Math.min(s.end, t1));
+      const fill = s.state === "OFFLINE" ? "url(#hatch)" : (STATES[s.state] || STATES.IDLE).c;
+      svg += `<rect data-k="s${i}_${k}" x="${X1}" y="${y}" width="${Math.max(X2 - X1, 0.75)}" height="${BAR}" fill="${fill}"/>`;
+    });
+    tlData.cycles.filter((c) => c.machine_id === m.id).forEach((c, k) => {
+      const X1 = x(Math.max(c.start_ts, t0)), X2 = x(Math.min(c.end_ts, t1));
+      if (X2 < LBL) return;
+      const fill = c.result === "ABORTED" ? "var(--alarm)" : "var(--cycle)";
+      svg += `<rect data-k="c${i}_${k}" x="${X1 + 0.5}" y="${y + BAR + 4}" width="${Math.max(X2 - X1 - 1, 1)}" height="${CBAR}" rx="2" fill="${fill}"/>`;
+    });
+    const L = m.live || {};
+    if (L.cycle_start && !m.stale) {   // open cycle
+      const X1 = x(Math.max(L.cycle_start, t0)), X2 = x(Math.min(nowS(), t1));
+      svg += `<rect data-k="o${i}" x="${X1 + 0.5}" y="${y + BAR + 4}" width="${Math.max(X2 - X1 - 1, 1)}" height="${CBAR}" rx="2" fill="var(--cycle)" fill-opacity="0.25" stroke="var(--cycle)" stroke-dasharray="3 2"/>`;
+    }
+  });
+  svg += `</svg>`;
+  host.innerHTML = svg;
+  const svgEl = host.querySelector("svg");
+  svgEl.onmousemove = (e) => {
+    const k = e.target.getAttribute && e.target.getAttribute("data-k");
+    if (!k) return hideTip();
+    const i = +k.slice(1).split("_")[0], j = +k.split("_")[1];
+    const m = ms[i];
+    if (k[0] === "s") {
+      const s = curSegs[m.id][j];
+      showTip(e, `<b>${STATES[s.state]?.label || s.state}</b> · ${esc(m.name)}<br>${fmtDT(s.start)} – ${fmtTime(s.end)}<br>Duration ${fmtDur(s.end - s.start)}${s.program ? `<br>Program ${esc(s.program)}` : ""}`);
+    } else if (k[0] === "c") {
+      const c = tlData.cycles.filter((q) => q.machine_id === m.id)[j];
+      showTip(e, `<b>${esc(c.program)}</b> · ${c.result === "ABORTED" ? "Aborted" : c.result === "COMPLETED" ? "Completed" : "Unknown end"}<br>${fmtDT(c.start_ts)} – ${fmtTime(c.end_ts)}<br>Cycle ${fmtDur(c.duration_s)} · running ${fmtDur(c.run_s)} · paused ${fmtDur(c.pause_s + c.alarm_s)}${c.wait_s ? ` · waiting ${fmtDur(c.wait_s)} (not counted)` : ""}`);
+    } else {
+      const L = m.live; showTip(e, `<b>${esc(L.program || "?")}</b> · cycle in progress<br>Started ${fmtTime(L.cycle_start)} · ${fmtDur(nowS() - L.cycle_start)}`);
+    }
+  };
+  svgEl.onmouseleave = hideTip;
+}
+function showTip(e, html) {
+  const t = $("#tip"); t.innerHTML = html; t.style.display = "block";
+  const w = t.offsetWidth, h = t.offsetHeight;
+  t.style.left = Math.min(e.clientX + 14, innerWidth - w - 8) + "px";
+  t.style.top = (e.clientY + h + 20 > innerHeight ? e.clientY - h - 12 : e.clientY + 14) + "px";
+}
+function hideTip() { $("#tip").style.display = "none"; }
+
+// ------------------------------------------------------------ tables
+const mname = (id) => (overview.machines.find((m) => m.id === id) || { name: id }).name;
+function renderPrograms(rows) {
+  $("#programs tbody").innerHTML = rows.map((r) => {
+    const key = r.machine_id + "|" + r.program;
+    return `<tr data-key="${esc(key)}" class="${selProgram === key ? "sel" : ""}"><td>${esc(mname(r.machine_id))}</td><td><b>${esc(r.program)}</b></td>
+    <td class="n">${r.completed}</td><td class="n">${r.aborted}</td><td class="n"><b>${fmtDur(r.median_s)}</b></td>
+    <td class="n">${fmtDur(r.min_s)}</td><td class="n">${fmtDur(r.max_s)}</td><td class="n">${fmtDur(r.avg_run_s)}</td></tr>`;
+  }).join("") || `<tr><td colspan="8" class="hint">No cycles in this period</td></tr>`;
+  $("#programs tbody").querySelectorAll("tr[data-key]").forEach((tr) => tr.onclick = () => {
+    selProgram = tr.dataset.key; trendAll = false; renderPrograms(rows); loadTrend();
+  });
+  if (!selProgram && rows.length) { selProgram = rows[0].machine_id + "|" + rows[0].program; renderPrograms(rows); loadTrend(); }
+}
+function resultCell(r) {
+  if (r === "COMPLETED") return `<span class="res" style="color:var(--running)"><i>✓</i><span style="color:var(--text)">Completed</span></span>`;
+  if (r === "PARTIAL") return `<span class="res" style="color:var(--muted)" title="Already running when the monitor started or reconnected - the start of this part was not seen. Counted as a part, not used for cycle-time statistics."><i>◐</i><span style="color:var(--text)">Partial</span></span>`;
+  if (r === "ABORTED") return `<span class="res" style="color:var(--alarm)"><i>✕</i><span style="color:var(--text)">Aborted</span></span>`;
+  return `<span class="res" style="color:var(--muted)"><i>?</i><span style="color:var(--text)">Unknown</span></span>`;
+}
+function subText(c) {
+  const t = c.sub_times || {};
+  if (Object.keys(t).length)
+    return Object.entries(t).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${fmtDur(v)}`).join(", ");
+  return (c.subprograms || []).join(", ");
+}
+function cycleRows(rows) {
+  return rows.map((c) => `<tr><td>${esc(mname(c.machine_id))}</td><td><b>${esc(c.program)}</b>${c.program_source === "latched" ? ' <span class="hint" title="Control does not report the main program; first program seen at cycle start">(latched)</span>' : ""}</td>
+    <td>${fmtDT(c.start_ts)}</td><td>${fmtTime(c.end_ts)}</td><td class="n"><b>${fmtDur(c.duration_s)}</b></td>
+    <td class="n">${fmtDur(c.run_s)}</td><td class="n">${fmtDur(c.pause_s + c.alarm_s)}</td><td class="n">${c.wait_s ? fmtDur(c.wait_s) : "–"}</td><td>${resultCell(c.result)}</td>
+    <td>${REASONS[c.end_reason] || c.end_reason}</td><td class="hint">${esc(subText(c))}</td></tr>`).join("")
+    || `<tr><td colspan="11" class="hint">No cycles in this period</td></tr>`;
+}
+function renderCycles(rows) {
+  $("#cycles tbody").innerHTML = cycleRows(rows);
+  $("#csv").href = `/api/cycles.csv?${qs()}`;
+}
+
+// ---------------------------------------------------------- trend chart
+async function loadTrend() {
+  if (!selProgram) return;
+  const [mid, prog] = selProgram.split("|");
+  const params = trendAll
+    ? new URLSearchParams({ from: 0, to: nowS() + 60, machine: mid, program: prog, limit: 1000 }).toString()
+    : qs({ machine: mid, program: prog, limit: 400 });
+  const rows = (await fetch(`/api/cycles?${params}`).then((r) => r.json()))
+    .filter((c) => c.result === "COMPLETED").reverse();
+  $("#trendTitle").textContent = `Cycle time trend · ${prog}`;
+  $("#trendHint").textContent = `${mname(mid)} · ${rows.length} completed cycles${trendAll ? " · all history" : ""}`;
+  const host = $("#trendChart");
+  const W = host.clientWidth || 500, H = 260, L = 48, B = 22, T = 8;
+  if (!rows.length) { host.innerHTML = `<p class="hint">No completed cycles</p>`; return; }
+  const max = Math.max(...rows.map((c) => c.duration_s)) * 1.08;
+  const nice = [30, 60, 120, 300, 600, 900, 1800, 3600, 7200].find((s) => max / s <= 5) || 7200;
+  const y = (v) => H - B - v / max * (H - B - T);
+  const bw = (W - L - 4) / rows.length;
+  const gap = bw > 4 ? 2 : 0;
+  let s = `<svg viewBox="0 0 ${W} ${H}" height="${H}">`;
+  for (let v = 0; v <= max; v += nice) s += `<line x1="${L}" x2="${W}" y1="${y(v)}" y2="${y(v)}" stroke="var(--grid)"/><text x="${L - 6}" y="${y(v) + 4}" text-anchor="end">${fmtDur(v)}</text>`;
+  rows.forEach((c, i) => {
+    const X = L + 2 + i * bw, w = Math.max(bw - gap, 1);
+    const run = c.run_s, pause = Math.max(c.duration_s - c.run_s, 0);
+    const r = Math.min(4, w / 2);
+    s += `<g data-i="${i}"><rect x="${X}" y="${y(run)}" width="${w}" height="${H - B - y(run)}" fill="var(--run-bar)"/>`;
+    if (pause > 0) s += `<rect x="${X}" y="${y(run + pause)}" width="${w}" height="${Math.max(y(run) - y(run + pause) - 2, 0.5)}" fill="var(--pause-bar)" rx="${Math.min(r, 2)}"/>`;
+    s += `<rect x="${X}" y="${T}" width="${bw}" height="${H - B - T}" fill="transparent"/></g>`;
+  });
+  const sorted = rows.map((c) => c.duration_s).sort((a, b) => a - b);
+  const med = sorted[Math.floor(sorted.length / 2)];
+  s += `<line x1="${L}" x2="${W}" y1="${y(med)}" y2="${y(med)}" stroke="var(--text2)" stroke-width="1.5" stroke-dasharray="4 3"/>`;
+  s += `<line x1="${L}" x2="${W}" y1="${H - B}" y2="${H - B}" stroke="var(--border)"/>`;
+  s += `<text x="${L}" y="${H - 5}">${fmtDT(rows[0].start_ts)}</text><text x="${W}" y="${H - 5}" text-anchor="end">${fmtDT(rows[rows.length - 1].start_ts)}</text></svg>`;
+  host.innerHTML = s;
+  host.querySelector("svg").onmousemove = (e) => {
+    const g = e.target.closest && e.target.closest("g[data-i]");
+    if (!g) return hideTip();
+    const c = rows[+g.dataset.i];
+    showTip(e, `<b>${fmtDur(c.duration_s)}</b> cycle<br>${fmtDT(c.start_ts)}<br>Running ${fmtDur(c.run_s)} · paused ${fmtDur(c.pause_s + c.alarm_s)}${c.wait_s ? ` · waiting ${fmtDur(c.wait_s)} (not counted)` : ""}`);
+  };
+  host.querySelector("svg").onmouseleave = hideTip;
+}
+
+// -------------------------------------------------------------- search
+let searchTimer = null, searchRows = [];
+const allTime = (extra) => new URLSearchParams({ from: 0, to: nowS() + 60, ...extra }).toString();
+async function runSearch() {
+  const text = $("#search").value.trim();
+  const url = new URL(location.href);
+  if (text) url.searchParams.set("q", text); else url.searchParams.delete("q");
+  history.replaceState(null, "", url);
+  if (!text) { $("#searchPanel").hidden = true; trendAll = false; return; }
+  const p = new URLSearchParams({ q: text });
+  const mf = $("#machineFilter").value; if (mf) p.set("machine", mf);
+  searchRows = await fetch(`/api/search?${p}`).then((r) => r.json());
+  $("#searchPanel").hidden = false;
+  $("#searchTitle").textContent = `Search “${text}” · ${searchRows.length} program${searchRows.length === 1 ? "" : "s"} found`;
+  renderSearch();
+  if (searchRows.length === 1) selectSearch(0);
+  else { searchSel = null; $("#searchCycles").hidden = true; }
+}
+function renderSearch() {
+  $("#searchTable tbody").innerHTML = searchRows.map((r, i) => `<tr data-i="${i}" class="${searchSel === i ? "sel" : ""}" style="cursor:pointer">
+    <td>${esc(mname(r.machine_id))}</td><td><b>${esc(r.program)}</b></td><td>${fmtDate(r.first_ts)}</td><td>${fmtDate(r.last_ts)}</td>
+    <td class="n">${r.completed}</td><td class="n">${r.aborted}</td><td class="n">${r.parts}</td>
+    <td class="n"><b>${fmtDur(r.median_s)}</b></td><td class="n">${fmtDur(r.recent_median_s)}</td>
+    <td class="n">${fmtDur(r.min_s)}</td><td class="n">${fmtDur(r.max_s)}</td></tr>`).join("")
+    || `<tr><td colspan="11" class="hint">No program matches “${esc($("#search").value)}” in the history</td></tr>`;
+  $("#searchTable tbody").querySelectorAll("tr[data-i]").forEach((tr) => tr.onclick = () => selectSearch(+tr.dataset.i));
+}
+async function selectSearch(i) {
+  searchSel = i; renderSearch();
+  const r = searchRows[i];
+  const rows = await fetch(`/api/cycles?${allTime({ machine: r.machine_id, program: r.program, limit: 2000 })}`).then((x) => x.json());
+  $("#searchCycles").hidden = false;
+  $("#searchCyclesTitle").textContent = `All cycles of ${r.program} on ${mname(r.machine_id)} (${rows.length})`;
+  $("#searchCycleRows").innerHTML = cycleRows(rows);
+  $("#searchCsv").href = `/api/cycles.csv?${allTime({ machine: r.machine_id, program: r.program })}`;
+  selProgram = r.machine_id + "|" + r.program; trendAll = true;
+  document.querySelectorAll("#programs tr.sel").forEach((t) => t.classList.remove("sel"));
+  loadTrend();
+}
+$("#search").oninput = () => { clearTimeout(searchTimer); searchTimer = setTimeout(runSearch, 300); };
+$("#search").onkeydown = (e) => {
+  if (e.key === "Enter") { clearTimeout(searchTimer); runSearch(); }
+  if (e.key === "Escape") { $("#search").value = ""; runSearch(); }
+};
+$("#searchClose").onclick = (e) => { e.preventDefault(); $("#search").value = ""; runSearch(); };
+
+// --------------------------------------------------------- machine detail
+function selectMachine(id) {
+  $("#machineFilter").value = id || "";
+  $("#machineFilter").onchange();
+  if (id) window.scrollTo({ top: 0, behavior: "smooth" });
+}
+document.addEventListener("click", (e) => {
+  const el = e.target.closest && e.target.closest("[data-mid]");
+  if (!el) return;
+  e.preventDefault();
+  // click a machine: open its detail view; click it again: back to all machines
+  selectMachine($("#machineFilter").value === el.dataset.mid ? "" : el.dataset.mid);
+});
+$("#allBack").onclick = () => selectMachine("");
+$("#home").onclick = (e) => { e.preventDefault(); selectMachine(""); };
+// version, license and where the source is (AGPL: users of the dashboard are offered the source)
+fetch("api/about").then((r) => r.json()).then((a) => {
+  $("#about").innerHTML = `Machine Monitoring ${esc(a.version)} · free software under ${esc(a.license)} · ` +
+    `<a href="${esc(a.source_url)}" target="_blank" rel="noopener">source code</a>`;
+}).catch(() => {});   // title = back to all machines (keeps the period)
+
+const fmtH = (s) => {                       // 3 h 12 min / 12 min / 45 s
+  s = Math.round(s || 0);
+  if (s >= 3600) return `${Math.floor(s / 3600)} h ${String(Math.floor((s % 3600) / 60)).padStart(2, "0")} min`;
+  if (s >= 60) return `${Math.floor(s / 60)} min`;
+  return `${s} s`;
+};
+// Donut: at-a-glance split. Max 6 slices (5 largest + "Other"); exact figures stay in the bars.
+function renderDonut(st, total, running) {
+  const host = $("#detailDonut");
+  if (!total) { host.innerHTML = ""; return; }
+  let slices = st.map(([k, v]) => ({ key: k, label: STATES[k].label, c: STATES[k].c, v }));
+  if (slices.length > 6) {
+    const rest = slices.slice(5);
+    slices = slices.slice(0, 5).concat([{ key: "OTHER", label: "Other (" + rest.map((r) => r.label).join(", ") + ")",
+      c: "var(--muted)", v: rest.reduce((a, r) => a + r.v, 0) }]);
+  }
+  const S = 180, R = 72, W = 26, C = 2 * Math.PI * R, GAP = slices.length > 1 ? 2 : 0;
+  let off = 0, svg = `<svg width="${S}" height="${S}" viewBox="0 0 ${S} ${S}" role="img" aria-label="Time per status">`;
+  svg += `<g transform="rotate(-90 ${S / 2} ${S / 2})">`;
+  slices.forEach((sl, i) => {
+    const len = C * sl.v / total, vis = Math.max(len - GAP, 0.6);
+    svg += `<circle data-i="${i}" cx="${S / 2}" cy="${S / 2}" r="${R}" fill="none" stroke="${sl.c}" stroke-width="${W}"
+      stroke-dasharray="${vis} ${C - vis}" stroke-dashoffset="${-off}" style="cursor:default"/>`;
+    off += len;
+  });
+  svg += `</g><text class="big" x="${S / 2}" y="${S / 2 + 4}" text-anchor="middle">${Math.round(100 * running / total)}%</text>
+    <text class="small" x="${S / 2}" y="${S / 2 + 22}" text-anchor="middle">running</text></svg>`;
+  host.innerHTML = svg;
+  const el = host.querySelector("svg");
+  el.onmousemove = (e) => {
+    const i = e.target.getAttribute && e.target.getAttribute("data-i");
+    if (i === null || i === undefined) return hideTip();
+    const sl = slices[+i];
+    showTip(e, `<b>${esc(sl.label)}</b><br>${fmtH(sl.v)} · ${Math.round(100 * sl.v / total)}%`);
+  };
+  el.onmouseleave = hideTip;
+}
+function renderDetail(progs) {
+  const id = $("#machineFilter").value;
+  $("#detail").hidden = !id;
+  if (!id || !overview) return;
+  const m = overview.machines.find((x) => x.id === id);
+  if (!m) return;
+  const [a, b] = window_();
+  $("#detailTitle").textContent = m.name;
+  const u = m.utilization || {};
+  const total = Object.values(u).reduce((x, y) => x + y, 0);
+  $("#detailSub").textContent = `${m.control} · ${fmtDT(a)} – ${fmtDT(b)} · ${fmtH(total)} recorded`;
+  // time per status: every classification, largest first, labelled (never colour alone)
+  const st = Object.keys(STATES).map((k) => [k, u[k] || 0]).filter(([, v]) => v > 0).sort((x, y) => y[1] - x[1]);
+  const max = Math.max(1, ...st.map(([, v]) => v));
+  $("#detailStates").innerHTML = st.map(([k, v]) => `<div class="hbar" title="${STATES[k].label}: ${fmtDur(v)}">
+      <span class="lab"><i class="sw" style="--c:${STATES[k].c}"></i>${STATES[k].label}</span>
+      <span class="track"><span class="fill" style="display:block;width:${(100 * v / max).toFixed(1)}%;background:${STATES[k].c}"></span></span>
+      <span class="val"><b>${fmtH(v)}</b> · ${total ? Math.round(100 * v / total) : 0}%</span></div>`).join("")
+    || `<p class="hint">No data in this period</p>`;
+  renderDonut(st, total, u.RUNNING || 0);
+  // parts per program in the period
+  const rows = (progs || []).filter((r) => r.machine_id === id).sort((x, y) => y.parts - x.parts || y.cycles - x.cycles);
+  const pmax = Math.max(1, ...rows.map((r) => r.parts));
+  $("#detailParts").innerHTML = rows.slice(0, 15).map((r) => `<div class="hbar" title="${esc(r.program)}: ${r.parts} parts, ${r.aborted} aborted, median cycle ${fmtDur(r.median_s)}">
+      <span class="lab"><b>${esc(r.program)}</b></span>
+      <span class="track"><span class="fill" style="display:block;width:${(100 * r.parts / pmax).toFixed(1)}%;background:var(--run-bar)"></span></span>
+      <span class="val"><b>${r.parts}</b> parts${r.aborted ? ` · ${r.aborted} aborted` : ""} · median ${fmtDur(r.median_s)}</span></div>`).join("")
+    + (rows.length > 15 ? `<p class="hint">+ ${rows.length - 15} more programs in the table below</p>` : "")
+    || `<p class="hint">No parts in this period</p>`;
+}
+
+// Alarms & messages: read from the control for information only - they do not change states or cycles.
+let almOpen = false, almFetching = false, almSig = "";
+async function loadAlarms() {
+  const id = $("#machineFilter").value;
+  if (!id || almFetching) return;
+  almFetching = true;
+  try { renderAlarms(id, await api("alarms")); } catch (e) { /* next refresh tries again */ }
+  finally { almFetching = false; }
+}
+function renderAlarms(id, d) {
+  if ($("#machineFilter").value !== id) return;
+  const m = overview && overview.machines.find((x) => x.id === id);
+  const live = (m && m.live) || {};
+  const now = nowS();
+  if (d.supported === false && !d.total) {
+    $("#almActive").innerHTML = `<p class="hint">This control does not provide alarm messages (or reading them is not supported for it).</p>`;
+    $("#almBody").innerHTML = "";
+    return;
+  }
+  const offline = live.state === "OFFLINE";
+  $("#almActive").innerHTML = d.active.length
+    ? d.active.map((a) => `<div class="alm-act${/^MSG/.test(a.code) ? " msg" : ""}"><span class="ic">${/^MSG/.test(a.code) ? "i" : "!"}</span><span class="alm-code">${esc(a.code)}</span>
+        <span class="txt">${esc(a.text)}</span><span class="since">since ${fmtSince(a.start_ts)} · ${fmtH(now - a.start_ts)}</span></div>`).join("")
+    : `<p class="alm-ok">${offline ? "Machine not connected - no current alarms known."
+        : d.supported == null ? "Alarm messages appear once the machine has been read." : "✓ No active alarms or messages."}</p>`;
+  // the history only changes when an alarm comes or goes: don't rebuild it (and lose the scroll position) every 3 s
+  const sig = JSON.stringify([id, d.total, d.active.length, d.summary.map((r) => [r.code, r.count]), perKey(per)]);
+  if (sig === almSig && $("#almBody").innerHTML) return;
+  almSig = sig;
+  if (!d.total) { $("#almBody").innerHTML = `<p class="hint">No alarms or messages in this period.</p>`; return; }
+  const sum = d.summary.slice(0, 12).map((r) => `<tr><td class="alm-code">${esc(r.code)}</td><td class="msg" title="${esc(r.text)}">${esc(r.text)}</td>
+      <td class="n">${r.count}×</td><td class="n">${fmtDur(r.total_s)}</td><td class="n">${fmtSince(r.last_ts)}</td></tr>`).join("");
+  const rec = d.recent.map((r) => `<tr><td>${fmtDT(r.start_ts)}</td><td class="alm-code">${esc(r.code)}</td>
+      <td class="msg" title="${esc(r.text)}">${esc(r.text)}</td><td class="n">${r.end_ts == null ? "<b>active</b>" : fmtDur(r.duration_s)}</td></tr>`).join("");
+  $("#almBody").innerHTML = `<table><thead><tr><th>Code</th><th>Message</th><th class="n">Times</th><th class="n">Total time</th><th class="n">Last</th></tr></thead>
+      <tbody>${sum}</tbody></table>
+    ${d.summary.length > 12 ? `<p class="hint">+ ${d.summary.length - 12} more different alarms</p>` : ""}
+    <details ${almOpen ? "open" : ""}><summary>All occurrences in this period (${d.total}${d.total > d.recent.length ? `, newest ${d.recent.length} shown` : ""})</summary>
+      <div class="scroll" style="max-height:300px"><table><thead><tr><th>Start</th><th>Code</th><th>Message</th><th class="n">Duration</th></tr></thead>
+      <tbody>${rec}</tbody></table></div></details>`;
+  $("#almBody details").ontoggle = (e) => { almOpen = e.target.open; };
+}
+
+// PLC message files: one-time copy from a Heidenhain control (runs on the monitor; files stay in data/plc_<id>/)
+let plcBusy = false;
+async function loadPlc() {
+  const id = $("#machineFilter").value;
+  const m = id && overview && overview.machines.find((x) => x.id === id);
+  const show = !!m && m.control === "heidenhain";
+  $("#detailPlc").hidden = !show;
+  if (!show) return;
+  let st;
+  try { st = await (await fetch(`/api/plc-fetch?machine=${encodeURIComponent(id)}`)).json(); } catch (e) { return; }
+  if ($("#machineFilter").value !== id) return;
+  if (st.supported === false) { $("#detailPlc").hidden = true; return; }
+  plcBusy = st.state === "running";
+  $("#plcBtn").disabled = plcBusy;
+  const d = st.stored || {};
+  const stored = d.files ? `Copied ${fmtSince(d.ts)} (${d.files} files kept, ${d.mb} MB)` +
+      (d.messages ? ` · <b>${d.messages} PLC messages</b> are read live and shown under Alarms &amp; messages`
+        : d.tables && d.tables.length ? ` · message tables: ${d.tables.slice(0, 6).map(esc).join(", ")} - no message list could be built`
+        : " · no message table recognised") : "";
+  let txt = "";
+  if (st.state === "running") txt = `⏳ ${esc(st.msg)}`;
+  else if (st.state === "error") txt = `<span class="bad">✕ ${esc(st.msg)}</span>`;
+  $("#plcStatus").innerHTML = [txt, stored].filter(Boolean).join(" · ") || "Not copied yet.";
+}
+$("#plcForm").onsubmit = async (e) => {
+  e.preventDefault();
+  const id = $("#machineFilter").value, pw = $("#plcPw").value;
+  if (!id || !pw || plcBusy) return;
+  $("#plcBtn").disabled = true;
+  $("#plcStatus").textContent = "⏳ connecting ...";
+  try {
+    await fetch("/api/plc-fetch", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ machine: id, password: pw }) });
+  } finally { $("#plcPw").value = ""; }
+  loadPlc();
+};
+
+// ------------------------------------------------------------- refresh
+let lastCycleSig = null, lastProgs = [];
+async function refreshLive() {
+  const t0c = Date.now() / 1000;
+  overview = await api("overview");
+  clockOffset = overview.now - (t0c + Date.now() / 1000) / 2;
+  // a cycle started or ended somewhere -> fetch timeline/cycles right away instead of waiting
+  const sig = overview.machines.map((m) => m.id + ":" + ((m.live || {}).cycle_start || 0)).join(",");
+  const cycleChanged = lastCycleSig !== null && sig !== lastCycleSig;
+  lastCycleSig = sig;
+  const sel = $("#machineFilter"), cur = sel.value;
+  if (sel.options.length - 1 !== overview.machines.length) {
+    sel.innerHTML = `<option value="">All machines</option>` + overview.machines.map((m) => `<option value="${esc(m.id)}">${esc(m.name)}</option>`).join("");
+    sel.value = cur;
+  }
+  renderCards();
+  renderDetail(lastProgs);
+  loadAlarms();
+  loadPlc();
+  $("#updated").textContent = "Updated " + new Date().toLocaleTimeString("nl-NL");
+  if (cycleChanged && !isLong()) refreshData();
+  else if (tlData.fetched) renderTimeline();
+}
+let fetching = false;
+async function refreshData() {
+  if (fetching) return;
+  fetching = true;
+  try {
+    const t = nowS();
+    const long = isLong();
+    const [segs, cycles, progs] = await Promise.all([long ? api("daily") : api("timeline"), api("cycles", { limit: long ? 300 : 5000 }), api("programs")]);
+    if (long) { dailyData = segs; tlData = { segs: [], cycles, fetched: t }; }
+    else tlData = { segs, cycles, fetched: t };
+    lastData = Date.now();
+    renderTimeline();
+    renderPrograms(progs);
+    lastProgs = progs;
+    renderDetail(progs);
+    renderCycles(cycles.slice(0, 300));
+    loadTrend();
+  } finally { fetching = false; }
+}
+let lastData = 0;
+async function refreshAll(auto) {
+  await refreshLive();
+  // month/year: the history hardly changes within minutes - refresh every 5 min instead of every 30 s
+  if (auto && isLong() && Date.now() - lastData < 5 * 60 * 1000) return;
+  await refreshData();
+}
+function setPeriod(r, p) {
+  range = r || range; per = p || null;
+  document.querySelectorAll("#ranges button").forEach((x) => x.classList.toggle("on", !per && x.dataset.r === range));
+  $("#per").classList.toggle("on", !!per);
+  $("#pLabel").textContent = perLabel(per);
+  // arrows step by the size of the period; "Today" steps to whole days, the hour ranges have no arrows
+  const stepable = !!per || range === "today" || range === "7d";
+  $("#pPrev").disabled = !stepable;
+  $("#pNext").disabled = !per || perBounds(per)[1] > day0(new Date());
+  document.querySelectorAll("#pPanel button[data-p]").forEach((b) => b.classList.toggle("on", perKey(per) === perKey(pFromCode(b.dataset.p))));
+  const url = new URL(location.href);
+  if (perKey(per) === "today") url.searchParams.delete("period"); else url.searchParams.set("period", perKey(per));
+  history.replaceState(null, "", url);
+  $("#almBody").innerHTML = ""; selProgram = null; trendAll = false;
+}
+function pFromCode(c) {
+  if (c[0] === "r") return { k: "r", days: +c.slice(1) };
+  const u = c[1], n = +c.slice(2);
+  return { k: "c", u, s: calShift(u, calStart(u, new Date()), n) };
+}
+function stepPeriod(n) {
+  let p = per;
+  if (!p) {                                  // quick buttons -> equivalent whole days
+    const t = day0(new Date());
+    p = range === "7d" ? { k: "d", a: addDays(t, -6), b: t } : { k: "d", a: t, b: t };
+  }
+  if (p.k === "c") p = { ...p, s: calShift(p.u, p.s, n) };
+  else {
+    const [a, e] = perBounds(p), len = Math.round((e - a) / 86400000);
+    p = { k: "d", a: addDays(a, n * len), b: addDays(e, n * len - 1) };
+  }
+  if (perBounds(p)[0] > new Date()) return;
+  setPeriod(null, p); refreshAll();
+}
+$("#pPrev").onclick = () => stepPeriod(-1);
+$("#pNext").onclick = () => stepPeriod(1);
+$("#pBtn").onclick = (e) => {
+  e.stopPropagation();
+  const open = $("#pPanel").hidden;
+  $("#pPanel").hidden = !open; $("#pBtn").setAttribute("aria-expanded", String(open));
+  if (open) { const [a, e2] = per ? perBounds(per) : [day0(new Date()), addDays(day0(new Date()), 1)];
+    $("#pFrom").value = ymd(a); $("#pTo").value = ymd(addDays(e2, -1)); }
+};
+document.addEventListener("click", (e) => { if (!$("#per").contains(e.target)) $("#pPanel").hidden = true; });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") $("#pPanel").hidden = true; });
+$("#pPanel").onclick = (e) => {
+  const b = e.target.closest("button[data-p]"); if (!b) return;
+  $("#pPanel").hidden = true; setPeriod(null, pFromCode(b.dataset.p)); refreshAll();
+};
+$("#pApply").onclick = () => {
+  if (!$("#pFrom").value) return;
+  let a = parseYmd($("#pFrom").value), b = parseYmd($("#pTo").value || $("#pFrom").value);
+  if (b < a) [a, b] = [b, a];
+  $("#pPanel").hidden = true; setPeriod(null, { k: "d", a, b }); refreshAll();
+};
+document.querySelectorAll("#ranges button").forEach((b) => b.onclick = () => { setPeriod(b.dataset.r, null); refreshAll(); });
+{ const p0 = new URLSearchParams(location.search).get("period"), got = p0 && perParse(p0);
+  setPeriod(got && got.range ? got.range : "today", got && got.per); }
+$("#machineFilter").onchange = () => {
+  $("#almActive").innerHTML = ""; $("#almBody").innerHTML = ""; almOpen = false;
+  $("#plcStatus").innerHTML = ""; $("#plcPw").value = "";
+  const url = new URL(location.href);
+  if ($("#machineFilter").value) url.searchParams.set("machine", $("#machineFilter").value); else url.searchParams.delete("machine");
+  history.replaceState(null, "", url); selProgram = null; trendAll = false; refreshAll(); if ($("#search").value.trim()) runSearch(); };
+addEventListener("resize", () => { renderTimeline(); loadTrend(); });
+const q0 = new URLSearchParams(location.search).get("q");
+const m0 = new URLSearchParams(location.search).get("machine");
+refreshAll().then(() => {
+  if (m0 && overview.machines.some((m) => m.id === m0)) selectMachine(m0);
+  if (q0) { $("#search").value = q0; runSearch(); }
+});
+setInterval(refreshLive, 3000);
+setInterval(() => refreshAll(true), 30000);
+setInterval(() => overview && renderCards(), 1000);
+</script>
+</body>
+</html>

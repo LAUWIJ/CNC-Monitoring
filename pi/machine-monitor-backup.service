@@ -1,0 +1,6 @@
+[Unit]
+Description=Nightly backup of the machine monitoring database
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 %h/machine-monitoring/pi/backup.py
