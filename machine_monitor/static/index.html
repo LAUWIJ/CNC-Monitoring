@@ -192,6 +192,15 @@ main { padding: 20px 24px 40px; display: grid; gap: 20px; }
 #xDlg label { display: flex; gap: 8px; align-items: center; margin-top: 10px; font-size: 13px; }
 #xDlg input { font: inherit; padding: 5px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); width: 120px; }
 .xdlgb { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+.card .tlife { margin-top: 8px; font-size: 12px; color: var(--text2); padding: 3px 8px; border-radius: 6px;
+  background: var(--surface2, rgba(127,127,127,.08)); display: inline-block; }
+.card .tlife.low { background: color-mix(in srgb, var(--paused, #e8a33d) 22%, transparent); color: var(--text); }
+.card .tlife.out { background: color-mix(in srgb, var(--alarm, #d64545) 25%, transparent); color: var(--text); }
+.cards.single .card .tlife { font-size: 14px; margin-top: 12px; }
+#detailTools table { width: 100%; border-collapse: collapse; font-size: 13px; }
+#detailTools th { text-align: left; color: var(--muted); font-weight: 500; padding: 4px 8px; border-bottom: 1px solid var(--border); }
+#detailTools td { padding: 5px 8px; border-bottom: 1px solid var(--border); font-variant-numeric: tabular-nums; }
+#detailTools small, .card small { color: var(--muted); font-weight: 400; }
 .card .more { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; font-size: 12px; color: var(--text2); }
 .card .more .ln { display: flex; justify-content: space-between; gap: 8px; }
 .card .more b { color: var(--text); font-variant-numeric: tabular-nums; }
@@ -336,6 +345,7 @@ tr.sel { background: var(--grid); }
         <div class="stbox"><div id="detailDonut"></div><div id="detailStates" class="hbars"></div></div></div>
       <div><h3 class="dh">Parts per program</h3><div id="detailParts" class="hbars"></div></div>
     </div>
+    <div id="detailTools" hidden><h3 class="dh" id="detailToolsTitle">Tools</h3><div id="detailToolsBody"></div></div>
     <div id="detailAlarms"><h3 class="dh">Alarms &amp; messages</h3><div id="almActive"></div><div id="almBody"></div></div>
     <div id="detailPlc" hidden><h3 class="dh">PLC message files (one-time copy)</h3>
       <p class="hint" style="margin:0">Copies the machine builder's PLC message and symbol files from this control once,
@@ -598,6 +608,7 @@ function renderCards() {
       <div class="prog" title="${esc(L.program)}">${esc(L.program || "—")}</div>
       ${sub || !mf ? `<div class="sub"${L.error ? ` title="${esc(L.error)}"` : ""}>${sub}</div>` : ""}
       ${mf ? cardMore(m, L, st, inCycle, now) : ""}
+      ${st !== "OFFLINE" ? toolLeftLine(m) : ""}
       <div class="kpis">
         <div class="kpi"><div class="v">${runPct}%</div><div class="l">Running</div></div>
         <div class="kpi"><div class="v">${m.parts}</div><div class="l">Parts</div></div>
@@ -617,6 +628,32 @@ function renderCards() {
 // Larger card in the single-machine view: progress of the current part against the usual cycle time of
 // this program (median of its last 10 parts) and what the control is doing right now (mode, sub, line).
 const MODE_LABEL = { AUTO: "AUTO", MDI: "MDI", MANUAL: "JOG", UNKNOWN: "" };
+// tool label: HEIDENHAIN / SINUMERIK name first (never a bare number), FANUC as T code (lathe: T0101)
+function toolLabel(tool, name, control, group) {
+  if (!tool) return "";
+  const fanuc = String(control || "").toLowerCase().startsWith("fanuc");
+  const num = fanuc ? "T" + String(tool).padStart(4, "0") : "T" + tool;
+  const grp = group ? ` <small>group ${group}</small>` : "";
+  return name ? `<b>${esc(name)}</b> <small>${esc(num)}</small>${grp}` : `<b>${esc(num)}</b>${grp}`;
+}
+
+// tool life left for the running program (FANUC tool groups): the group with the least left
+function toolLeftLine(m) {
+  if (m.tool_left == null) return "";
+  const n = m.tool_left, parts = m.tool_left_unit === "parts";
+  const unit = parts ? (n === 1 ? "part" : "parts") : "min";
+  const low = parts ? n <= 5 : n <= 30;
+  const single = m.tool_left_group == null;            // HEIDENHAIN: a life per tool, no groups
+  const tl = m.tool_left_tool ? toolLabel(String(m.tool_left_tool), m.tool_left_name, m.control).replace(/<[^>]+>/g, "") : "";
+  const what = single ? esc(tl) : `group ${m.tool_left_group}${tl ? ` (${esc(tl)})` : ""}`;
+  const mins = single && parts && m.tool_left_min != null ? ` <small>(${m.tool_left_min} min)</small>` : "";
+  const tip = single
+    ? "Tool life from the control's tool table (TIME1 - CUR_TIME), read at the end of every part; parts = minutes left / this tool's usual time per part. Lowest of the tools this program uses that have a life time set."
+    : `Tool life from the control (tool life management). Lowest of the ${m.tool_left_groups} tool group(s) this program uses, read at the end of the last cycle.`;
+  return `<div class="tlife${n <= 0 ? " out" : low ? " low" : ""}" title="${tip}">`
+    + `Tool life <b>${single && parts ? "≈ " : ""}${n} ${unit}</b>${mins} left · ${what}</div>`;
+}
+
 function cardMore(m, L, st, inCycle, now) {
   if (st === "OFFLINE") return "";
   const out = [];
@@ -640,8 +677,9 @@ function cardMore(m, L, st, inCycle, now) {
   const sub = L.current_program && L.current_program !== L.program
     ? `${st === "PAUSED" || st === "WAIT_ROBOT" || st === "WAITING" ? "held in" : "now in"} <b>${esc(L.current_program)}</b>`
     : (L.program ? "in the main program" : "");
-  if (mode || sub || line)
-    out.push(`<div class="ln" style="justify-content:flex-start;flex-wrap:wrap">${mode ? `<span class="mode${mode === "JOG" || mode === "MDI" ? " man" : ""}">${mode}</span>` : ""}<span>${sub}${line}</span></div>`);
+  const tool = L.tool ? ` · tool ${toolLabel(L.tool, L.tool_name, m.control, L.tool_group)}` : "";
+  if (mode || sub || line || tool)
+    out.push(`<div class="ln" style="justify-content:flex-start;flex-wrap:wrap">${mode ? `<span class="mode${mode === "JOG" || mode === "MDI" ? " man" : ""}">${mode}</span>` : ""}<span>${sub}${line}${tool}</span></div>`);
   return out.length ? `<div class="more">${out.join("")}</div>` : "";
 }
 
@@ -1320,6 +1358,48 @@ function renderDetail(progs) {
       <span class="val"><b>${r.parts}</b> parts${r.aborted ? ` · ${r.aborted} aborted` : ""} · median ${fmtDur(r.median_s)}</span></div>`).join("")
     + (rows.length > 15 ? `<p class="hint">+ ${rows.length - 15} more programs in the table below</p>` : "")
     || `<p class="hint">No parts in this period</p>`;
+  renderTools(m, rows);
+}
+
+// Tools of the running program (or the most-made program of the period): running time per tool per part
+// (median of its last 10 completed cycles) and, for FANUC tool groups, what is left of the group's life.
+let toolsKey = "", toolsAt = 0;
+function renderTools(m, rows) {
+  const prog = (m.live || {}).program || (rows[0] || {}).program;
+  const box = $("#detailTools");
+  if (!prog) { box.hidden = true; return; }
+  const key = m.id + "|" + prog;
+  if (key === toolsKey && Date.now() - toolsAt < 60000) return;
+  toolsKey = key; toolsAt = Date.now();
+  fetch(`api/program-tools?machine=${encodeURIComponent(m.id)}&program=${encodeURIComponent(prog)}`)
+    .then((r) => r.json()).then((d) => {
+      if (toolsKey !== key) return;
+      const tools = d.tools || [];
+      box.hidden = !tools.length;
+      if (!tools.length) return;
+      const groups = Object.fromEntries((d.groups || []).map((g) => [g.grp, g]));
+      $("#detailToolsTitle").textContent = `Tools in ${prog}`;
+      const tot = tools.reduce((a, t) => a + t.median_s, 0) || 1;
+      $("#detailToolsBody").innerHTML = `<table><tr><th>Tool</th><th>Time per part</th><th>Share</th><th>Used in</th><th>Tool life (control)</th></tr>`
+        + tools.map((t) => {
+          const g = t.group ? groups[t.group] : groups[-Number(t.tool)];   // HEIDENHAIN: single tool = group -T
+          let left;
+          if (g && g.left_amount != null && !t.group) {
+            const est = t.median_s > 0 ? Math.floor(g.left_amount * 60 / t.median_s) : null;
+            left = `<b>${g.left_amount} min</b> left${est != null ? ` ≈ ${est} part${est === 1 ? "" : "s"}` : ""} · life ${g.life} min`;
+          } else {
+            left = g && g.left_amount != null ? `<b>${g.left_amount} ${g.left_unit}</b> left · life ${g.life} ${g.count_type === "cycles" ? "parts" : "min"} per tool`
+              : (t.group ? `group ${t.group}` : `<span class="hint">not managed</span>`);
+          }
+          const cur = g && g.tools && g.use_tool > 0 ? g.tools[g.use_tool - 1] : null;
+          const label = t.group
+            ? `<b>Group ${t.group}</b> <small>${cur ? "now " + toolLabel(String(cur.num), null, m.control).replace(/<[^>]+>/g, "") + " · " : ""}`
+              + `${((n) => `${n} tool${n === 1 ? "" : "s"} in the group`)(g && g.tools ? g.tools.length : (t.tools_seen || []).length)}</small>`
+            : toolLabel(t.tool, t.name, m.control);
+          return `<tr><td>${label}</td><td>${fmtDur(t.median_s)}</td>`
+            + `<td>${Math.round(100 * t.median_s / tot)}%</td><td>${t.used_in} of last ${t.cycles}</td><td>${left}</td></tr>`;
+        }).join("") + `</table><p class="hint">Running time with the tool in the spindle (not pure cutting time), median per part.</p>`;
+    }).catch(() => {});
 }
 
 // Alarms & messages: read from the control for information only - they do not change states or cycles.
@@ -1384,10 +1464,15 @@ async function loadPlc() {
       (d.messages ? ` · <b>${d.messages} PLC messages</b> are read live and shown under Alarms &amp; messages`
         : d.tables && d.tables.length ? ` · message tables: ${d.tables.slice(0, 6).map(esc).join(", ")} - no message list could be built`
         : " · no message table recognised") : "";
+  const tis = !d.files ? ""
+    : d.tool_in_spindle ? `<br>Tool in spindle: PLC <b>${esc(d.tool_in_spindle)}</b> found in the PLC files <small>(tool_in_spindle in config.toml overrides it)</small>`
+    : !d.symbols_built ? "<br>Tool in spindle: not looked for yet - copy again with this version"
+    : `<br><span class="bad">Tool in spindle: address not found</span> (${d.map_files && d.map_files.length ? "map file: " + d.map_files.map(esc).join(", ") : "no PLC map file copied"})`
+      + (d.symbol_hints && d.symbol_hints.length ? `<br><small>${d.symbol_hints.map(esc).join("<br>")}</small>` : "");
   let txt = "";
   if (st.state === "running") txt = `⏳ ${esc(st.msg)}`;
   else if (st.state === "error") txt = `<span class="bad">✕ ${esc(st.msg)}</span>`;
-  $("#plcStatus").innerHTML = [txt, stored].filter(Boolean).join(" · ") || "Not copied yet.";
+  $("#plcStatus").innerHTML = ([txt, stored].filter(Boolean).join(" · ") || "Not copied yet.") + tis;
 }
 $("#plcForm").onsubmit = async (e) => {
   e.preventDefault();

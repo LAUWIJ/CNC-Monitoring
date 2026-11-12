@@ -102,6 +102,8 @@ class Cycle:
     parts: int = 0
     subprograms: list = field(default_factory=list)
     sub_times: dict = field(default_factory=dict)   # seconds spent in each sub-program / macro
+    tool_times: dict = field(default_factory=dict)  # running seconds per tool (key = tool number)
+    tool_info: dict = field(default_factory=dict)   # tool number -> {"name": .., "group": ..}
     partial: bool = False     # already running when monitoring started/reconnected: start not seen
     mode: str = "AUTO"
 
@@ -218,6 +220,13 @@ class CycleEngine:
             pc = display_name(prev.current_program)
             if pc and pc != self.cycle.program:
                 self.cycle.sub_times[pc] = self.cycle.sub_times.get(pc, 0.0) + dt
+            if prev.tool and self._prev_raw == MachineState.RUNNING:
+                c = self.cycle
+                c.tool_times[prev.tool] = c.tool_times.get(prev.tool, 0.0) + dt
+                if prev.tool not in c.tool_info and len(c.tool_info) < 100:
+                    c.tool_info[prev.tool] = {"name": prev.tool_name, "group": prev.tool_group}
+                elif prev.tool_group and not c.tool_info[prev.tool].get("group"):
+                    c.tool_info[prev.tool]["group"] = prev.tool_group
 
         # 2. edge detection on completion signals
         part_inc = end_inc = False
@@ -273,7 +282,8 @@ class CycleEngine:
             if self._pending is None:
                 c = self.cycle
                 self._pending = {"ts": s.ts, "run_s": c.run_s, "pause_s": c.pause_s, "alarm_s": c.alarm_s,
-                                 "wait_s": c.wait_s, "sub_times": dict(c.sub_times), "part": self._last_part}
+                                 "wait_s": c.wait_s, "sub_times": dict(c.sub_times),
+                                 "tool_times": dict(c.tool_times), "part": self._last_part}
             part_inc = False
         if self.cycle is not None and self._pending is not None:
             p = self._pending
@@ -346,14 +356,18 @@ class CycleEngine:
                      alarm_s=c.alarm_s - p["alarm_s"], wait_s=c.wait_s - p["wait_s"])
         after_subs = {k: v - p["sub_times"].get(k, 0.0) for k, v in c.sub_times.items()
                       if v - p["sub_times"].get(k, 0.0) > 0}
+        after_tools = {k: v - p["tool_times"].get(k, 0.0) for k, v in c.tool_times.items()
+                       if v - p["tool_times"].get(k, 0.0) > 0}
         c.run_s, c.pause_s, c.alarm_s, c.wait_s = p["run_s"], p["pause_s"], p["alarm_s"], p["wait_s"]
         c.sub_times = p["sub_times"]
+        c.tool_times = p["tool_times"]
         last = self._last_part
         self._last_part = p["part"]
         events = self._close("COMPLETED", "PART_COUNTER", p["ts"], s)
         self._last_part = last
         self.cycle = Cycle(self.machine_id, c.program, c.program_path, c.program_source, p["ts"],
-                           part_count_start=p["part"], mode=c.mode, sub_times=after_subs, **after)
+                           part_count_start=p["part"], mode=c.mode, sub_times=after_subs,
+                           tool_times=after_tools, tool_info=dict(c.tool_info), **after)
         return events
 
     def _close(self, result: str, reason: str, end_ts: float, s: Sample) -> list:
@@ -416,7 +430,11 @@ class CycleEngine:
             "cycle_run_s": c.run_s if c else None,
             "cycle_pause_s": (c.pause_s + c.alarm_s) if c else None,
             "cycle_wait_s": c.wait_s if c else None,
+            "cycle_tool_times": ({k: round(v) for k, v in c.tool_times.items()} if c else {}),
             "wait_reason": s.wait_reason if s else None,
+            "tool": s.tool if s else None,
+            "tool_name": s.tool_name if s else None,
+            "tool_group": s.tool_group if s else None,
             "last_ts": s.ts if s else None,
             "extra": (s.extra if s else {}),
         }

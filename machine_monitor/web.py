@@ -78,8 +78,16 @@ def make_handler(store: Store, plc_jobs=None, transfers=None, about=None):
                         m["aborted"] = sm.get("aborted", 0)
                         m["stale"] = (now - (m["updated_ts"] or 0)) > 30
                         m.update(store.typical(m["id"], (m.get("live") or {}).get("program")))
+                        live = m.get("live") or {}
+                        m.update(cached(("toolstat", m["id"], live.get("program"), live.get("tool_group"), live.get("tool")),
+                                        lambda: store.tool_status(m["id"], live.get("program"), live), 1e9))
                         out.append(m)
                     return self._json({"now": now, "from": t0, "to": t1, "machines": out})
+                if u.path == "/api/program-tools":
+                    if not mid or not q.get("program"):
+                        return self._send(400, b'{"error": "machine and program required"}', "application/json")
+                    return self._json({"tools": store.program_tools(mid, q["program"]),
+                                       "groups": list(store.tool_life_now(mid).values())})
                 if u.path == "/api/daily":
                     return self._json(cached(("daily", t0, t1, mid), lambda: store.daily(t0, t1, mid), t1 - t0))
                 if u.path == "/api/timeline":

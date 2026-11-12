@@ -261,6 +261,11 @@ class SiemensOpcUaDriver(Driver):
         nodes = dict(DEFAULT_NODES)
         nodes.update(cfg.get("nodes", {}))
         self.node_paths = {k: v for k, v in nodes.items() if v}
+        # tool in the spindle: number + identifier (name), read in the same request as the rest.
+        # Verified on a DNM6700 (T2 'VF-6.0-UNI') and GT3100LM (T1 'CNMG 120412'), 2026-11-12.
+        if cfg.get("read_tool", True):
+            self.node_paths.setdefault("tool_number", "/Channel/State/actTNumber")
+            self.node_paths.setdefault("tool_ident", "/Channel/State/actToolIdent")
         self.extra_paths = dict(cfg.get("extra_nodes", {}))
         self._nodes = {}
         self._last_counters = {}
@@ -659,8 +664,11 @@ class SiemensOpcUaDriver(Driver):
         extra["actParts"] = v.get("part_count")
         extra["totalParts"] = v.get("total_parts")
         extra.update(extra_u)
+        tno = _num(v.get("tool_number"))
+        tool = str(tno) if tno and tno > 0 else None
+        tool_name = (_text(v.get("tool_ident")) or None) if tool else None
         return Sample(
-            ts=time.time(), online=True, exec_state=exec_state, mode=mode,
+            ts=time.time(), online=True, exec_state=exec_state, mode=mode, tool=tool, tool_name=tool_name,
             main_program=(v.get("main_program") or None),
             current_program=(v.get("current_program") or None),
             part_count=parts,

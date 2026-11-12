@@ -21,6 +21,15 @@ log = logging.getLogger("plc_fetch")
 SKIP_EXT = {".zip", ".exe", ".dll", ".so", ".bin", ".bmp", ".png", ".jpg", ".jpeg", ".gif", ".ico", ".wav",
             ".mp3", ".pdf", ".chm", ".7z", ".gz", ".tar", ".img", ".iso", ".hex", ".pck", ".tgz", ".bz2"}
 MAX_FILE = 3 * 1024 * 1024        # bytes per file
+MAX_MAP = 40 * 1024 * 1024        # the PLC compiler's map file (MainPgm.map, ~3 MB): holds the addresses of
+                                  # symbols the compiler placed itself, e.g. DG_TOOL_IN_SPINDLE -> D17032
+
+
+def _too_big(path: str, size) -> bool:
+    # .map (binary, TNC 640 BMO) / .lst (compiler listing, ~7 MB - the only compiler output on the DVF Erowa):
+    # the files that hold the addresses the compiler gave to symbols like DG_TOOL_IN_SPINDLE
+    limit = MAX_MAP if path.lower().endswith((".map", ".lst")) else MAX_FILE
+    return size is not None and int(size) > limit
 MAX_TOTAL = 150 * 1024 * 1024     # bytes in total
 MAX_FILES = 3000
 
@@ -163,7 +172,7 @@ def fetch_plc_files(mcfg: dict, password: str, dest_root: str, progress=None) ->
         total = got = 0
         for path, size in files:
             ext = os.path.splitext(path)[1].lower()
-            if ext in SKIP_EXT or (size is not None and int(size) > MAX_FILE):
+            if ext in SKIP_EXT or _too_big(path, size):
                 continue
             if total > MAX_TOTAL or got >= MAX_FILES:
                 log.warning("download limit reached - stopped (see filelist.txt for the rest)")
@@ -201,7 +210,7 @@ def fetch_plc_files(mcfg: dict, password: str, dest_root: str, progress=None) ->
                 extra.append(f"{kind}\t{size if size is not None else ''}\t{path}\t(direct folder)")
                 if kind != "file":
                     continue
-                if os.path.splitext(path)[1].lower() in SKIP_EXT or (size is not None and int(size) > MAX_FILE):
+                if os.path.splitext(path)[1].lower() in SKIP_EXT or _too_big(path, size):
                     continue
                 local = os.path.join(dest, *path.replace("PLC:\\", "").split("\\"))
                 if os.path.exists(local):
@@ -282,6 +291,17 @@ def summarize(dest: str) -> dict:
         out["messages"] = len(plc_messages.load(dest) or [])
     except Exception:
         out["messages"] = 0
+    try:
+        from . import plc_messages
+        sym = plc_messages.load_symbols(dest)
+        out["symbols_built"] = os.path.exists(os.path.join(dest, "plc_symbols.json"))
+        ent = sym.get("tool_in_spindle") or {}
+        out["tool_in_spindle"] = ent.get("address") or (
+            " or ".join(ent["candidates"]) + " (the one holding the last called tool)" if ent.get("candidates") else None)
+        out["map_files"] = (sym.get("_info") or {}).get("map_files", [])
+        out["symbol_hints"] = (sym.get("_info") or {}).get("hints", [])[:6]
+    except Exception:
+        pass
     out["tables"] = sorted(out["tables"])[:30]
     out["ts"] = os.path.getmtime(os.path.join(dest, "filelist.txt")) if os.path.exists(os.path.join(dest, "filelist.txt")) else None
     return out
@@ -302,6 +322,8 @@ class PlcJobs:
         for mid in self.machines:
             try:
                 plc_messages.prune(self.dest(mid))
+                if os.path.exists(os.path.join(self.dest(mid), "filelist.txt")):
+                    plc_messages.build_symbols(self.dest(mid))     # search again with the current rules
             except Exception as e:
                 log.warning("[%s] PLC file clean-up failed: %s", mid, e)
 
@@ -340,10 +362,13 @@ class PlcJobs:
                 if res.get("messages"):
                     say("cleaning up files that are not needed ...")
                     plc_messages.prune(dest)
+                tool = res.get("tool_in_spindle")
+                tool_msg = f" · tool in spindle at {tool}" if tool else " · tool in spindle: not found"
                 with self.lock:
                     job.update(state="done", ended=time.time(),
-                               msg=f"copied - {res.get('messages', 0)} PLC messages ready" if res.get("messages")
-                               else f"copied - no PLC message list ({res.get('reason', 'no markers with a fixed address')})")
+                               msg=(f"copied - {res.get('messages', 0)} PLC messages ready" if res.get("messages")
+                                    else f"copied - no PLC message list ({res.get('reason', 'no markers with a fixed address')})")
+                               + tool_msg)
             except Exception as e:
                 log.warning("[%s] PLC file copy failed: %s", mid, e)
                 with self.lock:

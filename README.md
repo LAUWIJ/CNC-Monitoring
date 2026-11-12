@@ -102,6 +102,26 @@ Read every 5 s (`alarm_poll_s`); switch off per machine with `alarms = false`.
 
 Thresholds are in `[defaults]` in the config. Scenario tests: `python -m unittest discover tests`.
 
+## Tools and tool life
+
+The card of a selected machine shows the tool in the spindle; the detail view lists **Tools in <program>**
+(median running time per tool per part, from the last 10 finished parts). Tool life is shown only where the
+**control** manages it - there is no manual counting.
+
+- **Fanuc**: the tool in the spindle from macro `#4120`. With tool life management (e.g. `T0199` = group 1) the
+  monitor reads the groups (life, counter, sister tools) at the end of a part and shows *parts left* for the program.
+- **Siemens**: tool number and identifier (`actTNumber`, `actToolIdent`) with the normal values.
+- **Heidenhain**: the monitor asks the control once at connect whether it answers *tool in spindle*:
+  - **yes** (e.g. iTNC 530): tool number from that request, name and life (`TIME1`/`TIME2`, `CUR.TIME`) read as
+    single tool table fields - once per tool, and at the end of a part for the tools it used;
+  - **no** (TNC 640): the PLC keeps the tool number in `DG_TOOL_IN_SPINDLE`; its address is taken from the
+    machine's own PLC compiler output (`MainPgm.map` or `MainPgm.lst`) after *Copy from control* (see below), or
+    set per machine with `tool_in_spindle = "D17032"`. Names and life come from `TNC:\table\tool.t`, read when
+    connecting, at the start of a part after a setup, at the end of every part and for an unknown tool number.
+- Life in minutes is turned into parts with the tool's usual time per part.
+
+`probe_tools_pi.bat <id>` shows, read-only, what a control offers.
+
 ## Periods (weeks, months, years)
 
 Next to the quick buttons (*Today*, *Last 8 h*, *Last 24 h*, *Last 7 days*) is one **📅 Period** button:

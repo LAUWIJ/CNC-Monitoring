@@ -66,6 +66,14 @@ class Sample:
     wait_reason: Optional[str] = None          # with exec_state WAITING: "operator" (default) or "robot"
     current_block: Optional[str] = None        # NC block being executed, if the driver can read it
 
+    # Tool in the spindle (if the driver reads it) ---------------------------
+    # tool: stable key, the tool number as the control knows it ("101" on a FANUC lathe = T01 offset 01,
+    #   "12" on a HEIDENHAIN). tool_name: what people recognise (HEIDENHAIN NAME, SINUMERIK tool ident);
+    #   None on FANUC. tool_group: FANUC tool life group in use (T0199 -> group 1), else None.
+    tool: Optional[str] = None
+    tool_name: Optional[str] = None
+    tool_group: Optional[int] = None
+
     extra: dict = field(default_factory=dict)  # raw values for debugging / dashboard
 
 

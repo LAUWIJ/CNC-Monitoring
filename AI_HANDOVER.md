@@ -244,6 +244,70 @@ add a test with the observed pattern first.
     GiveUserAccess, found at `/Methods/...` node ids, not in the browse tree).
 - **Still unverified**: other FANUC series; other SINUMERIK versions.
 
+## 5b2. Tools and tool life (step 1, Nov 2026)
+
+- `Sample.tool` (key = tool number as the control knows it), `tool_name` (HEIDENHAIN NAME / SINUMERIK ident;
+  shown FIRST - never a bare number on those controls), `tool_group` (FANUC tool life group in use).
+  `Cycle.tool_times` = running seconds per tool, `tool_info` = name/group; stored in `cycles.tool_times/tool_info`.
+- **FANUC** (verified on the Puma 2600LY / 0i-D and 5100LY with `probe_tools_pi.bat`, read-only,
+  `machine_monitor/tool_probe.py`): `#4120` = the tool in the spindle. After a group call **T0199** it holds the
+  tool the control PICKED (e.g. 101), so a group call is recognised by `cnc_rdtlusegrp().use` (0 = direct call
+  like T0101). Groups: `cnc_rdngrp`, `cnc_rdtlgrp` (one group per call), `cnc_rdtltool` (buffer of exactly the
+  asked size) - functions/structs from FANUC's `fwlib32.h`. Per tool status: 1 available, 2 life expired,
+  3 skipped. `use_tool` = POSITION in the group. Left = (life - count) on the tool in use + life x other available
+  tools (`tool_life.group_left`; 2600LY: life 9, count 1, T101 expired, T1212 skipped -> 17 parts).
+  Driver reads `#4120` each poll (`read_tool`, default on), group in use on a tool change + every 10 s, group
+  life at connect and after every cycle that used a group -> table `tool_life` (one row per CHANGE).
+- **SINUMERIK**: `/Channel/State/actTNumber` + `actToolIdent` read with the other values (driver, `read_tool`).
+  Catalogue entries (`/Tool/Catalogue/...[u1,i]`, i = 1..numTools) are POSITIONS, not tool numbers - map them with
+  `toolNo[u1,i]`; `/Tool/Data/toolMon[u1,T]` / `toolState[u1,T]` are per TOOL NUMBER. On the DNM6700 only ~3 of
+  237 tools have monitoring on - tool life is barely used there.
+- **HEIDENHAIN (DVF BMO, TNC 640, pyLSV2 1.8)**: `spindle_tool_status()` and `read_data_path` give nothing, the API
+  symbols have no tool number. **The PLC has it**: HEIDENHAIN's example PLC keeps the tool in the spindle in the
+  double word `<Global>\SPINDLE[0].DG_TOOL_IN_SPINDLE` - D16356 or D17032 depending on the PLC version (address
+  placed by the PLC compiler, so it is NOT in the .def files, only in the compiler output `MainPgm.map`). Verified
+  2026-11-12: D17032 = 59 = T59 LANGFAN in the spindle. "Copy from control" also copies `MainPgm.map` (own size
+  limit, ~3 MB, kept after prune). On the TNC 640 it is BINARY (`PLCCOMP V 4.10 MAPFILE`): `plc_messages.map_address`
+  finds the struct member record (`D` + offset 400 for DG_TOOL_IN_SPINDLE) and the struct variable record (`SPINDLE`,
+  type `s`, base 16632; the variable name comes from the sources, `Spindle[KG_S1].DG_tool_in_spindle`, default
+  SPINDLE) -> 16632 + 400 = D17032, matches. A first, too loose text search picked "B01" - fixed.
+  **DVF Erowa (TNC 640, other PLC version): no MainPgm.map on the control**, only the compiler LISTING
+  `MainPgm.lst` (`PLCCOMP V6.21`, ~7 MB; copied since the .map/.lst size limit is 40 MB, kept after prune). The
+  listing gives struct members WITHOUT an address (`1638 DG_tool_in_spindle D`; the struct `Spindle` is at IS15968),
+  but where the code takes the symbol's address (`PS K&SPINDLE[0].DG_TOOL_IN_SPINDLE`) the compiled bytes that follow
+  hold it as a constant: `C7 04 02 E4 3F 00 00` = 0x3FE4 = **16356** -> `plc_messages.listing_addresses`. Probe
+  confirmed D16356 = 3 = T3 VF-8.0-UNI. Several different addresses -> stored as `candidates`; the driver keeps the
+  one holding the tool with the newest LAST_USE in tool.t (only if exactly one matches) - the user's idea. A fixed
+  list of guessed addresses was rejected by the user ("the addresses will be different on any machine").
+  `plc_messages.build_symbols()` writes `plc_symbols.json` (kept after prune, rebuilt at start); machine setting
+  `tool_in_spindle = "D17032"` overrides, `false` switches off. The driver reads it every poll (one PLC read, like
+  the PLC messages); 0 = empty spindle. Names + life come from `TNC:\table\tool.t` (LSV2 only transfers whole
+  files, ~30 kB; one-field `read_data_path` doesn't work on the TNC 640). **When the table is read (agreed with the
+  user - polling it was rejected):** at connect; at the START of a part only after a setup (manual/MDI mode seen,
+  or another main program) - tool numbers are often reused with new names at setup; at the END of every part
+  (collector -> `read_tool_life`, driver flag `tool_life_after_every_cycle`; min 20 s between reads); and for an
+  unknown tool number (max once a minute). Tools with TIME1 (else TIME2) set are stored in `tool_life` as a
+  one-tool group with number **-T** (count_type minutes, life = TIME1, count = CUR_TIME, TL = L -> expired).
+  `store.tool_status` turns minutes into parts with the tool's median running time per part and takes off the
+  tool's running time in the current part (`cycle_tool_times` in the live snapshot) until the end-of-part read
+  corrects it. On the BMO only T9 has a life time (and it was far past it: CUR_TIME 1722 of 32 min).
+- **HEIDENHAIN iTNC 530 (VC630)**: the control's own LSV2 functions work here (not on the TNC 640):
+  `spindle_tool_status()` answers (ToolInformation; tool number read from `.number`) and `read_data_path` reads
+  ONE tool table field (`/TABLE/TOOL/T/9/NAME` -> 'VLAKFREES-44'; TIME1 -> 0; CUR_TIME -> None, so `CUR.TIME` is
+  tried too). `TNC:\table\tool.t` can't be read there (other path) and isn't needed: number every poll, NAME once
+  per tool (cache cleared at the start of a part after a setup), TIME1/TIME2/CUR at the end of a part for the tools
+  it used. No PLC address involved. Verified 2026-11-12 (probe m3): spindle_tool_status ->
+  {_number: 39, _index: 0, _axis: 'Z', _length, _radius, _name: ''} (name always empty -> NAME field); CUR_TIME ->
+  None but **CUR.TIME -> 1687**; TIME1/TIME2 -> 0; TL -> False (a bool).
+  **Route choice by capability, not by type name (user's choice):** at connect the driver asks
+  `spindle_tool_status()` once; tool data back -> direct route, None/error -> PLC route (`_spindle_status_works`).
+  A `tool_in_spindle` setting forces the PLC route. Logged at connect and shown by the tool probe.
+- Dashboard: card line "Tool life N parts left · group g (T...)" = the group with the least left of the groups
+  the running program used in its last 10 cycles (`store.tool_status`); detail view "Tools in <program>":
+  median running time per tool per part, sister tools of a group combined into one row.
+- No manual tool life counting (user's decision): tools without control-side life show "not managed".
+- Planned: step 3 - "can these jobs run tonight" check against group life.
+
 ## 5c. Month / year views: daily summary
 
 - Tables `daily_state` (machine, local day, state, seconds), `daily_prog` (machine, day, program, cycles /

@@ -179,6 +179,8 @@ def main():
                     help="test: send a tiny test program to a FANUC memory card, read it back and compare")
     ap.add_argument("--fanuc-card-fetch", nargs=2, metavar=("MACHINE_ID", "FILE"),
                     help="read-only test: fetch one file from a FANUC memory card (CF_TEXT)")
+    ap.add_argument("--probe-tools", metavar="MACHINE_ID",
+                    help="read-only: which tool data (current tool, tool life) the control offers")
     ap.add_argument("--fanuc-card-test", nargs="+", metavar=("MACHINE_ID", "N"),
                     help="FANUC test, READ-ONLY: read the first N entries (default 1) of the memory card file list "
                          "with cnc_rdmcdfinfo. Asks for confirmation; not used by the monitor or the dashboard.")
@@ -266,6 +268,24 @@ def main():
         except Exception as e:
             out.append(f"FAILED: {type(e).__name__}: {e}")
         d.close()
+        return
+
+    if args.probe_tools:
+        from machine_monitor.tool_probe import probe
+        m = next((m for m in cfg.get("machine", []) if m["id"] == args.probe_tools), None)
+        if not m:
+            sys.exit(f"no machine with id '{args.probe_tools}' in {cfg_path}")
+        m = {**cfg.get("defaults", {}), **m}
+        print(f"Tool probe on {m.get('name', m['id'])} ({m.get('control')}, {m.get('host')}) - read only.")
+        if m.get("control") == "fanuc":
+            print("FANUC: reads the current T code and the tool life groups. Run it with the machine idle.")
+            if input("Type YES to continue: ").strip() != "YES":
+                sys.exit("cancelled")
+        try:
+            probe(m)
+        except Exception as e:
+            sys.exit(f"probe failed: {e}")
+        print("\ndone - nothing was written to the control.")
         return
 
     if args.fanuc_card_send:

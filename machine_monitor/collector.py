@@ -39,7 +39,10 @@ class MachineWorker(threading.Thread):
         self.store = store
         self.poll = float(mcfg.get("poll_interval_s", defaults.get("poll_interval_s", 1.0)))
         self.driver = make_driver(mcfg)
-        has_sig = store.register_machine(self.id, mcfg.get("name", self.id), mcfg.get("control", "?"))
+        ctrl = mcfg.get("control", "?")
+        if ctrl == "simulator":               # show which control it imitates, clearly marked as demo
+            ctrl = f"{mcfg.get('flavor', 'sim')} · demo"
+        has_sig = store.register_machine(self.id, mcfg.get("name", self.id), ctrl)
         self.engine = CycleEngine(self.id, engine_config(defaults, mcfg), has_completion_signal=has_sig)
         self.stop_evt = threading.Event()
         self.connected = False
@@ -60,6 +63,12 @@ class MachineWorker(threading.Thread):
                 self.store.add_state(self.id, ev.state.value, ev.start_ts, ev.program)
             elif isinstance(ev, Cycle):
                 self.store.add_cycle(ev)
+                groups = {i.get("group") for i in (ev.tool_info or {}).values() if i.get("group")}
+                if getattr(self.driver, "tool_life_after_every_cycle", False):
+                    # HEIDENHAIN: life per tool from the tool table, read once at the end of every part
+                    self.read_tool_life(set(ev.tool_times or {}), ev.end_ts or s.ts)
+                elif groups:
+                    self.read_tool_life(groups, ev.end_ts or s.ts)
                 if live:
                     log.info("[%s] cycle %s %s %.0fs (%s)", self.id, ev.program, ev.result, ev.duration_s, ev.end_reason)
         if live and (s.ts - self._last_live >= 2.0 or self.engine.state_since >= self._last_live):
@@ -67,6 +76,17 @@ class MachineWorker(threading.Thread):
             snap["error"] = self.last_error
             self.store.update_live(self.id, snap, self.engine.has_completion_signal)
             self._last_live = s.ts
+
+    def read_tool_life(self, groups, ts: float):
+        """Tool life of the given groups (None = all) from the control, stored when changed. Never fatal."""
+        fn = getattr(self.driver, "read_tool_life", None)
+        if fn is None:
+            return
+        try:
+            for g in fn(groups) or []:
+                self.store.add_tool_life(self.id, ts, g)
+        except Exception as e:
+            log.warning("[%s] tool life: %s", self.id, e)
 
     def track_alarms(self, alarms, ts: float):
         """Diff the active alarm list against what is open: open new rows, close cleared ones."""
@@ -126,6 +146,7 @@ class MachineWorker(threading.Thread):
                     self.last_error = None
                     backoff = 2.0
                     log.info("[%s] connected", self.id)
+                    self.read_tool_life(None, time.time())     # current state of all tool groups
                 except Exception as e:
                     self.last_error = f"connect: {e}"
                     log.warning("[%s] connect failed: %s", self.id, e)

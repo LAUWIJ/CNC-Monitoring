@@ -36,6 +36,10 @@ subprogram_patterns = [
 #                (not set)           browse + fetch only (default)
 #                transfer = false    no panel for this machine
 #                transfer_roots = ["//CNC_MEM/USER/PATH1/", "//MEMCARD/"]   override the folders offered
+#                read_tool = false   FANUC: don't read the tool in the spindle (#4120, one small call per
+#                                    poll; on by default). Tool life groups (T0199 = group 1) are read
+#                                    only when the control has tool life management, at a tool change /
+#                                    every 10 s (group in use) and at the end of a cycle (life + counter).
 #                memory_card = "dnc" FANUC with a DNC memory card shown as CF_TEXT in FANUC's Program Transfer
 #                                    Tool (e.g. 0i-D): adds "Memory card" (list/fetch/send/replace) and never
 #                                    opens CF_TEXT as a folder - that crashed a 0i-D. Not needed for //MEMCARD/.
@@ -88,6 +92,13 @@ name = "Machine 2 (TNC 640)"
 control = "heidenhain"
 host = "192.168.1.12"
 port = 19000
+# Tool in the spindle (TNC 640 & co): the PLC double word DG_TOOL_IN_SPINDLE. Its address is found
+# automatically by "Copy from control" in the detail view (from the PLC compiler's MainPgm.map). Set it here
+# to override, e.g. the HEIDENHAIN example PLC uses D16356 or D17032 depending on the version;
+# false = don't read it. Tool names and tool life (TIME1/TIME2 - CUR_TIME) come from TNC:\table\tool.t,
+# read only: when connecting, at the start of a part after a setup (manual/MDI mode or another program), at
+# the end of every part, and for an unknown tool number (at most once a minute). LSV2 only reads whole files.
+# tool_in_spindle = "D17032"
 
 # ------------------------------------------------------------------ Fanuc
 [[machine]]

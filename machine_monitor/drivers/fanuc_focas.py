@@ -146,6 +146,12 @@ class FanucFocasDriver(Driver):
         self.read_opmsg = bool(cfg.get("read_operator_messages", True))
         # N-number being executed, shown on the enlarged card. One extra small call per poll -> off by default.
         self.supports_seq = bool(cfg.get("read_sequence_number", False))
+        # tool in the spindle (macro #4120, one small call per poll) + FANUC tool life groups (T0199 = group 1)
+        self.read_tool = bool(cfg.get("read_tool", True))
+        self.tool_life_ok = None          # unknown until the first check after connecting
+        self._last_tool = None
+        self._group = None
+        self._group_ts = 0.0
 
     def _load(self):
         if self.lib is not None:
@@ -201,6 +207,18 @@ class FanucFocasDriver(Driver):
             L.cnc_rdseqnum.restype = C.c_short
         else:
             self.supports_seq = False
+        from ..tool_probe import ODBTLINFO, ODBTLIFE2, ODBUSEGRP, IODBTLGRP, IODBTLTOOL
+        for fn, argt in (("cnc_rdtlinfo", [C.c_ushort, C.POINTER(ODBTLINFO)]),
+                         ("cnc_rdngrp", [C.c_ushort, C.POINTER(ODBTLIFE2)]),
+                         ("cnc_rdtlusegrp", [C.c_ushort, C.POINTER(ODBUSEGRP)]),
+                         ("cnc_rdtlgrp", [C.c_ushort, C.c_int32, C.POINTER(C.c_short), C.POINTER(IODBTLGRP)]),
+                         ("cnc_rdtltool", [C.c_ushort, C.c_int32, C.c_int32, C.POINTER(C.c_short),
+                                           C.POINTER(IODBTLTOOL)])):
+            if hasattr(L, fn):
+                getattr(L, fn).argtypes = argt
+                getattr(L, fn).restype = C.c_short
+            else:
+                self.tool_life_ok = False
         for fn in ("cnc_exeprgname", "cnc_pdf_rdmain"):
             if not hasattr(L, fn):
                 setattr(self, "supports_" + ("exeprgname" if fn == "cnc_exeprgname" else "pdf"), False)
@@ -220,6 +238,7 @@ class FanucFocasDriver(Driver):
                    -1: "CNC busy / other FOCAS client connected", -3: "library handle error"}.get(ret, "")
             raise DriverError(f"cnc_allclibhndl3 failed ({ret}) {why}".strip())
         self.connected = True
+        self.tool_life_ok = None if self.tool_life_ok is None or self.tool_life_ok else False
 
     def _check(self, ret: int, fn: str):
         if ret in (EW_SOCKET, EW_HANDLE):
@@ -291,13 +310,75 @@ class FanucFocasDriver(Driver):
             if self._check(L.cnc_rdmacro(h, self.part_macro, 10, C.byref(m)), "cnc_rdmacro"):
                 parts = int(round(m.mcr_val / (10 ** m.dec_val))) if m.dec_val >= 0 else int(m.mcr_val)
 
+        tool, group = self._read_tool(L, h) if self.read_tool else (None, None)
+
         return Sample(
             ts=time.time(), online=True, exec_state=exec_state, mode=mode, alarm=alarm,
-            main_program=main, current_program=current, part_count=parts,
+            main_program=main, current_program=current, part_count=parts, tool=tool, tool_group=group,
             extra={"run": st.run, "aut": st.aut, "motion": st.motion, "alarm": st.alarm,
                    "emergency": st.emergency, "running_no": run_no, "main_no": main_no, "seq_no": seq,
                    "dnc": dnc},
         )
+
+    # ------------------------------------------------------------ tools
+    def _tool_life_available(self, L, h) -> bool:
+        if self.tool_life_ok is None:
+            from ..tool_probe import ODBTLINFO
+            ti = ODBTLINFO()
+            ret = L.cnc_rdtlinfo(h, C.byref(ti))
+            self._check(ret, "cnc_rdtlinfo")
+            self.tool_life_ok = ret == EW_OK and ti.max_group > 0
+            self.max_group, self.max_tool = ti.max_group, ti.max_tool
+        return bool(self.tool_life_ok)
+
+    def _read_tool(self, L, h):
+        """Tool in the spindle (#4120; after a group call T0199 it holds the tool the control picked, e.g. 101)
+        and the tool life group in use (0 = a direct call like T0101). Group read on a tool change + every 10 s."""
+        m = ODBM()
+        if not self._check(L.cnc_rdmacro(h, 4120, 10, C.byref(m)), "cnc_rdmacro"):
+            return None, None
+        val = m.mcr_val / (10 ** m.dec_val) if m.dec_val > 0 else m.mcr_val
+        tool = str(int(val)) if val > 0 else None
+        now = time.time()
+        if self._tool_life_available(L, h) and (tool != self._last_tool or now - self._group_ts >= 10):
+            from ..tool_probe import ODBUSEGRP
+            ug = ODBUSEGRP()
+            if self._check(L.cnc_rdtlusegrp(h, C.byref(ug)), "cnc_rdtlusegrp"):
+                self._group = int(ug.use) or None
+            self._group_ts = now
+        self._last_tool = tool
+        return tool, (self._group if tool else None)
+
+    def read_tool_life(self, groups=None) -> list:
+        """State of tool life groups (None = all groups set up). Read functions only (FANUC fwlib32.h):
+        cnc_rdngrp, cnc_rdtlgrp (one group per call), cnc_rdtltool (buffer of exactly the asked size)."""
+        if not self.connected:
+            return []
+        L, h = self.lib, self.h.value
+        if not self._tool_life_available(L, h):
+            return []
+        from ..tool_probe import ODBTLIFE2, IODBTLGRP, IODBTLTOOL
+        ng = ODBTLIFE2()
+        if not self._check(L.cnc_rdngrp(h, C.byref(ng)), "cnc_rdngrp"):
+            return []
+        n_groups = min(int(ng.data), int(self.max_group or ng.data), 64)
+        wanted = range(1, n_groups + 1) if groups is None else sorted(g for g in groups if 1 <= g <= n_groups)
+        out = []
+        for g in wanted:
+            num, gd = C.c_short(1), IODBTLGRP()
+            if not self._check(L.cnc_rdtlgrp(h, g, C.byref(num), C.byref(gd)), "cnc_rdtlgrp") or num.value < 1:
+                continue
+            if gd.ntool <= 0 or gd.life <= 0:
+                continue                                  # group not filled
+            tools = []
+            k = min(int(gd.ntool), int(self.max_tool or gd.ntool), 32)
+            buf, tn = (IODBTLTOOL * k)(), C.c_short(k)
+            if self._check(L.cnc_rdtltool(h, g, 1, C.byref(tn), buf), "cnc_rdtltool"):
+                tools = [{"num": int(t.tool_num), "status": int(t.tool_inf)} for t in buf[:max(0, tn.value)]]
+            out.append({"grp": g, "count_type": {0: "cycles", 1: "minutes"}.get(gd.count_type, str(gd.count_type)),
+                        "life": int(gd.life), "count": int(gd.count), "ntool": int(gd.ntool),
+                        "nfree": int(gd.nfree), "use_tool": int(gd.use_tool), "tools": tools})
+        return out
 
     # ------------------------------------------------------------ alarms
     def _alarm_msgs(self, fn: str, struct, typ: int):

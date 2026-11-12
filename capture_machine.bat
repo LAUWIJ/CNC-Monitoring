@@ -1,7 +1,7 @@
 @echo off
 rem Records the network traffic between this PC and ONE machine straight into a file in this folder
 rem (no save window). Uses dumpcap, which comes with Wireshark.
-rem   capture_machine.bat 192.168.1.20 cf_text
+rem   capture_machine.bat 192.168.1.50 cf_text
 rem Stop the recording with Ctrl+C.
 cd /d "%~dp0"
 set DUMPCAP="C:\Program Files\Wireshark\dumpcap.exe"

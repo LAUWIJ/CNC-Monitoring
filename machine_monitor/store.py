@@ -72,6 +72,24 @@ CREATE TABLE IF NOT EXISTS transfers (
     client TEXT                   -- address of the browser that asked
 );
 CREATE INDEX IF NOT EXISTS ix_trf ON transfers(machine_id, ts);
+
+-- tool life read from the control (FANUC tool groups), one row per CHANGE of a group
+CREATE TABLE IF NOT EXISTS tool_life (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    machine_id TEXT NOT NULL,
+    ts REAL NOT NULL,
+    grp INTEGER NOT NULL,
+    count_type TEXT,              -- 'cycles' or 'minutes'
+    life INTEGER,
+    count INTEGER,
+    ntool INTEGER,
+    nfree INTEGER,
+    use_tool INTEGER,             -- position (1-based) of the tool in use within the group
+    tools TEXT,                   -- JSON [{"num": .., "status": ..}]
+    left_amount INTEGER,          -- what is left in the group, in left_unit ('parts' / 'min')
+    left_unit TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_tl ON tool_life(machine_id, grp, ts);
 -- daily summary (local calendar days) for month/year views - derived data, can always be rebuilt
 CREATE TABLE IF NOT EXISTS daily_state (
     machine_id TEXT NOT NULL, day TEXT NOT NULL, state TEXT NOT NULL, secs REAL NOT NULL,
@@ -104,7 +122,8 @@ class Store:
             self.db.executescript(SCHEMA)
             # columns added later - upgrade existing databases in place
             cols = {r[1] for r in self.db.execute("PRAGMA table_info(cycles)")}
-            for col, typ in (("wait_s", "REAL DEFAULT 0"), ("sub_times", "TEXT")):
+            for col, typ in (("wait_s", "REAL DEFAULT 0"), ("sub_times", "TEXT"), ("tool_times", "TEXT"),
+                             ("tool_info", "TEXT")):
                 if col not in cols:
                     self.db.execute(f"ALTER TABLE cycles ADD COLUMN {col} {typ}")
             # v1: the first PLC-message version read unverified marker addresses - remove what it recorded
@@ -216,13 +235,140 @@ class Store:
         with self.lock:
             self.db.execute(
                 "INSERT INTO cycles(machine_id,program,program_path,program_source,start_ts,end_ts,duration_s,"
-                "run_s,pause_s,alarm_s,result,end_reason,parts,part_count_end,subprograms,mode,wait_s,sub_times) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "run_s,pause_s,alarm_s,result,end_reason,parts,part_count_end,subprograms,mode,wait_s,sub_times,"
+                "tool_times,tool_info) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (c.machine_id, c.program, c.program_path, c.program_source, c.start_ts, c.end_ts,
                  c.duration_s, c.run_s, c.pause_s, c.alarm_s, c.result, c.end_reason, c.parts,
                  c.part_count_end, json.dumps(c.subprograms), c.mode, c.wait_s,
-                 json.dumps({k: round(v, 1) for k, v in c.sub_times.items()})))
+                 json.dumps({k: round(v, 1) for k, v in c.sub_times.items()}),
+                 json.dumps({k: round(v, 1) for k, v in getattr(c, "tool_times", {}).items()}) or None,
+                 json.dumps(getattr(c, "tool_info", {})) or None))
             self.db.commit()
+
+    # ---------------------------------------------------------------- tools
+    def add_tool_life(self, machine_id: str, ts: float, g: dict) -> bool:
+        """Store a group's state if it changed since the last stored row. Returns True if stored."""
+        from .tool_life import group_left
+        amount, unit = group_left(g)
+        tools = json.dumps(g.get("tools") or [])
+        key = (g.get("count_type"), g.get("life"), g.get("count"), g.get("ntool"), g.get("nfree"),
+               g.get("use_tool"), tools)
+        with self.lock:
+            last = self.db.execute(
+                "SELECT count_type,life,count,ntool,nfree,use_tool,tools FROM tool_life "
+                "WHERE machine_id=? AND grp=? ORDER BY ts DESC LIMIT 1", (machine_id, g["grp"])).fetchone()
+            if last is not None and tuple(last) == key:
+                return False
+            self.db.execute(
+                "INSERT INTO tool_life(machine_id,ts,grp,count_type,life,count,ntool,nfree,use_tool,tools,"
+                "left_amount,left_unit) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                (machine_id, ts, g["grp"], *key, amount, unit))
+            self.db.commit()
+        return True
+
+    def tool_life_now(self, machine_id: str) -> dict:
+        """Latest stored state per group: {grp: {...}}."""
+        with self.lock:
+            rows = self.db.execute(
+                "SELECT t.* FROM tool_life t JOIN (SELECT grp, MAX(ts) ts FROM tool_life WHERE machine_id=? "
+                "GROUP BY grp) m ON t.grp=m.grp AND t.ts=m.ts WHERE t.machine_id=?",
+                (machine_id, machine_id)).fetchall()
+        out = {}
+        for r in rows:
+            d = dict(r)
+            d["tools"] = json.loads(d["tools"] or "[]")
+            out[d["grp"]] = d
+        return out
+
+    def tool_status(self, machine_id: str, program, live: dict) -> dict:
+        """For the card: the tool life of the running program with the least left. Candidates = the FANUC groups
+        this program called in its recent cycles (+ the group in use now) and the single tools with a life of
+        their own (HEIDENHAIN, stored as group -T). Minutes are turned into parts with the tool's median running
+        time per part; during a part the tool's running time so far is taken off (corrected at the end of it)."""
+        ptools = self.program_tools(machine_id, program) if program else []
+        groups = {t["group"] for t in ptools if t.get("group")}
+        if live.get("tool_group"):
+            groups.add(int(live["tool_group"]))
+        per_part = {}                            # group -> median running seconds per part
+        for t in ptools:
+            if not t.get("group") and str(t["tool"]).isdigit():
+                groups.add(-int(t["tool"]))
+                per_part[-int(t["tool"])] = t["median_s"]
+        if live.get("tool") and str(live["tool"]).isdigit() and not live.get("tool_group"):
+            groups.add(-int(live["tool"]))
+        if not groups:
+            return {}
+        now = self.tool_life_now(machine_id)
+        running = live.get("cycle_tool_times") or {}
+        cstart = live.get("cycle_start") or 0
+        best = None
+        for g in groups:
+            r = now.get(g)
+            if not r or r.get("left_amount") is None:
+                continue
+            amount, unit, minutes = r["left_amount"], r["left_unit"], None
+            if g < 0 and unit == "min":
+                minutes = float(amount)
+                if r["ts"] <= cstart:                # read before this part started: take off what it ran
+                    minutes = max(0.0, minutes - running.get(str(-g), 0) / 60)
+                med = per_part.get(g)
+                if med and med > 0:
+                    amount, unit = int(minutes * 60 // med), "parts"
+                else:
+                    amount = int(minutes)
+            key = amount if unit == "parts" else amount / 10    # minutes without a part time: rank them late
+            if best is None or key < best[0]:
+                best = (key, r, amount, unit, minutes)
+        if best is None:
+            return {}
+        _, r, amount, unit, minutes = best
+        tools = r.get("tools") or []
+        use = r.get("use_tool") or 0
+        cur = tools[use - 1]["num"] if 0 < use <= len(tools) else None
+        name = next((t.get("name") for t in ptools if str(t["tool"]) == str(cur)), None) if r["grp"] < 0 else None
+        if r["grp"] < 0 and not name and str(live.get("tool")) == str(cur):
+            name = live.get("tool_name")
+        return {"tool_left": amount, "tool_left_unit": unit, "tool_left_group": r["grp"] if r["grp"] > 0 else None,
+                "tool_left_tool": cur, "tool_left_name": name, "tool_left_min": None if minutes is None else int(minutes),
+                "tool_left_groups": len(groups), "tool_left_ts": r["ts"]}
+
+    def program_tools(self, machine_id: str, program: str, n: int = 10) -> list:
+        """Tools a program uses: median running time per tool over its last n completed cycles."""
+        with self.lock:
+            rows = self.db.execute(
+                "SELECT tool_times, tool_info FROM cycles WHERE machine_id=? AND program=? AND result='COMPLETED' "
+                "AND tool_times IS NOT NULL AND tool_times != '{}' ORDER BY end_ts DESC LIMIT ?",
+                (machine_id, program, n)).fetchall()
+        if not rows:
+            return []
+        # sister tools of a FANUC tool group (T0199 -> T0101, later T1313 ...) are one tool to the program:
+        # combine them under the group ("G1"), and remember which tools of the group were seen
+        per, info, order, seen = {}, {}, {}, {}
+        for r in rows:
+            tt = json.loads(r["tool_times"] or "{}")
+            ti = json.loads(r["tool_info"] or "{}")
+            cyc = {}
+            for i, (k, v) in enumerate(tt.items()):
+                g = (ti.get(k) or {}).get("group")
+                key = f"G{g}" if g else k
+                cyc[key] = cyc.get(key, 0.0) + v
+                order[key] = min(order.get(key, 99), i)
+                info.setdefault(key, {"name": (ti.get(k) or {}).get("name"), "group": g})
+                if g:
+                    seen.setdefault(key, [])
+                    if k not in seen[key]:
+                        seen[key].append(k)
+            for key, v in cyc.items():
+                per.setdefault(key, []).append(v)
+        out = []
+        for k, vals in per.items():
+            vals = sorted(vals + [0.0] * (len(rows) - len(vals)))      # a cycle without this tool counts as 0
+            med = vals[len(vals) // 2] if len(vals) % 2 else (vals[len(vals) // 2 - 1] + vals[len(vals) // 2]) / 2
+            out.append({"tool": k, "name": (info.get(k) or {}).get("name"), "group": (info.get(k) or {}).get("group"),
+                        "median_s": round(med, 1), "cycles": len(rows), "used_in": sum(1 for x in vals if x > 0),
+                        "tools_seen": seen.get(k, [])})
+        out.sort(key=lambda t: order.get(t["tool"], 99))
+        return out
 
     LIVE_PERSIST_S = 60
 
@@ -322,6 +468,8 @@ class Store:
             d = dict(r)
             d["subprograms"] = json.loads(d["subprograms"] or "[]")
             d["sub_times"] = json.loads(d.get("sub_times") or "{}")
+            d["tool_times"] = json.loads(d.get("tool_times") or "{}")
+            d["tool_info"] = json.loads(d.get("tool_info") or "{}")
             d["wait_s"] = d.get("wait_s") or 0.0
             out.append(d)
         return out
