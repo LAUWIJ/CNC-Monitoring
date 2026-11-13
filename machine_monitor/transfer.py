@@ -292,11 +292,23 @@ class FanucFiles(FileSession):
         self._card_name(self.CARD + name)
         if len(name) > 19:
             raise TransferError("memory card file names are at most 19 characters")
+        from .fanuc_card import CardExists
         with open(local, "rb") as f:
             data = f.read()
         try:
+            on_card = {x["name"].upper() for x in self.card_list()}
+        except Exception:
+            on_card = None
+        try:
             with self._card_stream() as cs:
                 cs.send(name, data, progress, overwrite)
+        except CardExists as e:
+            if on_card is None or name.upper() in on_card:
+                raise TransferError(f"memory card: {name} is already on the memory card")
+            log.info("card send %s refused: %s", name, e)
+            raise TransferError("the control refused to take the file - it does that when the machine is in a mode "
+                                "where it can't receive (FANUC's own tool says 'wrong mode'), e.g. MDI or a held "
+                                "program. Reset or switch to EDIT and try again.")
         except (CardError, OSError) as e:
             raise TransferError(f"memory card: {e}")
 

@@ -123,9 +123,12 @@ class CardStream:
     def send(self, name: str, data: bytes, progress=None, overwrite: bool = False) -> None:
         payload = self.prepare(data)
         self.s.sendall(frame(0x1101, start_body(name, overwrite)))
-        typ, _ = self.recv()
+        typ, body = self.recv()
         if typ == 0x1103 and not overwrite:
-            raise CardExists(f"{name} is already on the memory card")
+            # 1103 = the control won't create the file. Seen for an existing name (overwrite test 2026-11-11) AND
+            # for a new name while the machine was in MDI with a held program (2026-11-12; FANUC's own tool then
+            # says "wrong mode"). The caller tells the two apart with the card list.
+            raise CardExists(f"{name}: control answered 1103 {bytes(body[:16]).hex()}")
         if typ != 0x1102:
             raise CardError(f"control refused to receive {name} (answer {typ:04x})")
         for i in range(0, len(payload), BLOCK):

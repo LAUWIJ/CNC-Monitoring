@@ -104,7 +104,8 @@ main { padding: 20px 24px 40px; display: grid; gap: 20px; }
 #timeline text.name { cursor: pointer; }
 .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; }
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px;
-  border-top: 4px solid var(--c, var(--idle)); }
+  border-top: 4px solid var(--c, var(--idle)); min-width: 0; }   /* a long program name must not widen the card */
+.card .top > div { min-width: 0; }
 .card .top { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
 .card .name { font-weight: 650; font-size: 15px; }
 .card .ctrl { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .03em; }
@@ -130,7 +131,7 @@ main { padding: 20px 24px 40px; display: grid; gap: 20px; }
 .err { color: var(--alarm); font-size: 12px; margin-top: 6px; }
 /* single-machine view: card + transfer panel side by side, card shows part progress and mode */
 #topRow.single { display: grid; grid-template-columns: minmax(300px, 380px) minmax(0, 1fr); gap: 14px; align-items: stretch; }
-#topRow.single .cards { grid-template-columns: 1fr; }
+#topRow.single .cards { grid-template-columns: minmax(0, 1fr); }
 @media (max-width: 900px) { #topRow.single { grid-template-columns: 1fr; } }
 #xfer { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
 #xfer[hidden] { display: none; }
@@ -212,7 +213,9 @@ main { padding: 20px 24px 40px; display: grid; gap: 20px; }
 .cards.single .card { padding: 18px 20px; }
 .cards.single .card .name { font-size: 18px; }
 .cards.single .card .ctrl, .cards.single .chip { font-size: 13px; }
-.cards.single .prog { font-size: 28px; margin-top: 16px; }
+.cards.single .prog { font-size: 28px; margin-top: 16px; white-space: normal; overflow-wrap: anywhere;
+  line-height: 1.15; }
+.cards.single .prog.long { font-size: 21px; }      /* e.g. 5000010513702BEW1AMF.MPF: wraps instead of running out */
 .cards.single .sub { font-size: 14px; min-height: 20px; }
 .cards.single .kpi .v { font-size: 26px; }
 .cards.single .kpi .l { font-size: 12px; }
@@ -605,7 +608,7 @@ function renderCards() {
     return `<div class="card" data-mid="${esc(m.id)}" title="${mf ? "Click again to show all machines" : "Show details for " + esc(m.name)}" style="--c:${S.c}">
       <div class="top"><div><div class="name">${esc(m.name)}</div><div class="ctrl">${esc(m.control)}</div></div>
         <span class="chip" style="--c:${S.c}"><span class="dot"></span>${S.icon} ${S.label}</span></div>
-      <div class="prog" title="${esc(L.program)}">${esc(L.program || "—")}</div>
+      <div class="prog${String(L.program || "").length > 16 ? " long" : ""}" title="${esc(L.program)}">${esc(L.program || "—")}</div>
       ${sub || !mf ? `<div class="sub"${L.error ? ` title="${esc(L.error)}"` : ""}>${sub}</div>` : ""}
       ${mf ? cardMore(m, L, st, inCycle, now) : ""}
       ${st !== "OFFLINE" ? toolLeftLine(m) : ""}
@@ -1339,7 +1342,7 @@ function renderDetail(progs) {
   $("#detailTitle").textContent = m.name;
   const u = m.utilization || {};
   const total = Object.values(u).reduce((x, y) => x + y, 0);
-  $("#detailSub").textContent = `${m.control} · ${fmtDT(a)} – ${fmtDT(b)} · ${fmtH(total)} recorded`;
+  $("#detailSub").textContent = `${String(m.control || "").toUpperCase()} · ${fmtDT(a)} – ${fmtDT(b)} · ${fmtH(total)} recorded`;
   // time per status: every classification, largest first, labelled (never colour alone)
   const st = Object.keys(STATES).map((k) => [k, u[k] || 0]).filter(([, v]) => v > 0).sort((x, y) => y[1] - x[1]);
   const max = Math.max(1, ...st.map(([, v]) => v));
