@@ -26,9 +26,9 @@ Working with an AI assistant? Give it **AI_HANDOVER.md** first.
 1. Copy `config.example.toml` to **`config.toml`** and fill in your machines (one `[[machine]]` block each).
    - `id`: short and permanent (it keys the history), `name`: free text, can change any time.
    - `enabled = false` skips a machine for now.
-2. **FANUC machines**: get the FOCAS2 library (FANUC part number **A02B-0207-K737**) from FANUC / your machine
-   builder and put it in `FOCAS\`
-   (see `FOCAS\README.txt`).
+2. **FANUC machines**: on the Raspberry Pi nothing to do - FANUC's Linux library for the Pi is included in
+   `FOCAS\`. To run the monitor on Windows, get the FOCAS2 library (FANUC part number **A02B-0207-K737**)
+   from FANUC / your machine builder and put it in `FOCAS\` (see `FOCAS\README.txt`).
 3. Test each machine: `python run.py --probe <id>` (or `probe.bat <id>`). The result is also in
    `data\monitor.log`. This shows whether the login works and which values come through - the variable
    paths can differ per control and software version.

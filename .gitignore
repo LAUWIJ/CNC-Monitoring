@@ -13,6 +13,9 @@ __pycache__/
 *.pcapng
 *.pcap
 
-# FANUC FOCAS libraries are licensed - each site gets them from FANUC / its machine builder
+# FANUC FOCAS libraries are licensed - each site gets the Windows ones from FANUC / its machine builder.
+# Exception: the Linux ARM library for the Raspberry Pi, which FANUC allows to be redistributed freely
+# (see NOTICE.md).
 FOCAS/*
 !FOCAS/README.txt
+!FOCAS/libfwlib32-linux-armv7.so.1.0.5

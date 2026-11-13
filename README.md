@@ -40,7 +40,8 @@ Open http://localhost:8080. Four simulated machines (Fanuc, Siemens, Heidenhain 
 ### Raspberry Pi (permanent installation)
 
 Raspberry Pi 4 with **Raspberry Pi OS Lite (32-bit)** - 32-bit is required for the FANUC library
-(`FOCAS/libfwlib32-linux-armv7.so.*`; the Pi 4's 64-bit kernel is fine). The Windows folder stays the
+(`FOCAS/libfwlib32-linux-armv7.so.1.0.5`, included - FANUC allows the Linux library to be redistributed; the
+Pi 4's 64-bit kernel is fine). The Windows folder stays the
 master copy; the Pi never needs access to the PC. Address of the Pi: `pi\pi_settings.local.bat` (not in Git; `pi\pi_settings.bat` holds only a placeholder).
 
 | on the PC | what it does |
@@ -177,8 +178,9 @@ people use a changed version over a network, e.g. the dashboard on your shop net
 source code of your version under the same license. The dashboard footer links to the source; set
 `[server] source_url` in `config.toml` if you run a changed version.
 
-An additional permission allows use together with FANUC's FOCAS2 library, which is not free software and is
-**not** included - see `NOTICE.md`, which also lists the third-party packages and trademarks.
+An additional permission allows use together with FANUC's FOCAS2 library, which is not free software. Only
+FANUC's Linux library for the Raspberry Pi is included (unchanged, FANUC allows it to be redistributed); the
+Windows libraries are not - see `NOTICE.md`, which also lists the third-party packages and trademarks.
 
 This project is not affiliated with, endorsed by or supported by FANUC, Siemens, HEIDENHAIN, DN Solutions or
 any other machine or control builder. Their names are only used to say which controls it works with.
