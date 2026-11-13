@@ -308,6 +308,24 @@ add a test with the observed pattern first.
 - No manual tool life counting (user's decision): tools without control-side life show "not managed".
 - Planned: step 3 - "can these jobs run tonight" check against group life.
 
+## 5b2b. FANUC M00/M01 stop (2026-11-13, not yet verified)
+
+- Puma 2600: waiting at M01 (orange light on the machine) still showed green - `cnc_statinfo.run` stays 3 (STRT)
+  there. The driver now reads PMC F9 (`pmc_rdpmcrng`, type F, byte) when run = 3 and motion = 0: DM00 = F9.7,
+  DM01 = F9.6 -> PAUSED, `extra.m_stop`. Read-only; switched off after 5 failed reads; setting
+  `read_m00_signals = false`. `extra` also shows `mstb` now (for the probe).
+
+## 5b3. MTConnect driver (Nov 2026, being tried on the DMG MORI CLX 450 TC, m13)
+
+- `machine_monitor/drivers/mtconnect.py`, `control = "mtconnect"`: standard library only (urllib + ElementTree), GET
+  `http://host:port[/device]/current` every poll, namespace-agnostic parse (`parse_current` -> rows), mapping in
+  `sample_from_rows` (see the module docstring). Path choice: `path = "..."` else the first component with an
+  Execution. Conditions Fault/Warning -> `read_alarms` (display only). `probe()` tries ports 5000/7878/5001/8082/80,
+  prints the header, every data item and 20 s of samples. Tests: `tests/test_mtconnect.py` (made-up agent XML).
+- Not verified on a machine yet: which data items DMG MORI's agent offers (e.g. whether PartCount and the MAIN
+  program are there) decides how good cycle detection is; without PartCount the engine falls back to
+  Execution PROGRAM_COMPLETED / READY.
+
 ## 5c. Month / year views: daily summary
 
 - Tables `daily_state` (machine, local day, state, seconds), `daily_prog` (machine, day, program, cycles /
@@ -396,8 +414,6 @@ on the Pi - CRLF would break bash) and CRLF for `*.bat`. New sites: `GETTING_STA
 
 ## 9. Open ideas (not built)
 
-- MTConnect driver (for DMG MORI machines with the MDC option) - simple HTTP/XML: `Execution`,
-  `ControllerMode`, `Program`, `PartCount`.
 - Show alarms on the timeline / cards (now only in the detail view, by choice).
 - Exclude setup cycles from statistics.
 - Settings page in the dashboard (machines, wait rules) instead of editing `config.toml`.

@@ -120,3 +120,18 @@ o8_digit_program_numbers = false       # true if the control has 8-digit O-numbe
 # program = '^O9022$'
 # reason = "robot"          # robot | operator
 # action = "pause"
+
+# ------------------------------------------------------------------ MTConnect (any brand with an agent)
+# Read-only HTTP: the monitor asks the MTConnect agent for /current once per second (Execution, ControllerMode,
+# Program, PartCount, ToolNumber, Conditions). E.g. DMG MORI (CELOS / MDC), Okuma, Mazak, or an adapter + agent.
+# `python run.py --probe m4` (probe_pi.bat m4) finds the agent (tries 5000, 7878, 5001, 8082, 80) and lists
+# every data item it offers.
+# [[machine]]
+# id = "m4"
+# name = "Machine 4 (MTConnect)"
+# control = "mtconnect"
+# host = "192.168.1.14"        # or a full URL: "http://192.168.1.14:5000"
+# port = 5000
+# device = "LATHE1"            # only when the agent serves several devices
+# path = "path1"               # lathes with two paths/turrets: which one counts (default: the first)
+# part_count_subtype = "ALL"   # PartCount subType to use when there are several (ALL, GOOD, ...)

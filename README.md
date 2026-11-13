@@ -66,6 +66,7 @@ on the PC once the Pi runs. Dashboard: `http://<pi-address>:8080`.
 
 **Siemens**: `python run.py --probe <id>` (or `probe.bat <id>`) tests login, security and every value and writes the result to `data\monitor.log`. Verified on DN Solutions DNM6700/NHP5000: `chanStatus` 1 = active, `workPNameLong` is only the workpiece folder, umati not offered. Otherwise check the node paths with UaExpert (free from Unified Automation). They can differ slightly by software version. Override them in `[machine.nodes]`.
 **Fanuc**: the part counter must count on M30 (parameter 6700/6710). If counting is switched off, the system falls back to reset detection.
+**MTConnect** (`control = "mtconnect"`): any machine with an MTConnect agent (DMG MORI CELOS/MDC, Okuma, Mazak, or an adapter + agent). Read-only HTTP to `/current` once per second: Execution, ControllerMode, Program (MAIN/ACTIVE), PartCount, ToolNumber, Block, EmergencyStop and Conditions (shown as alarms). `--probe <id>` finds the agent's port and lists every data item it offers. Experimental - not yet verified on a real machine.
 
 ## How start/end is detected (sub-programs and M-code macros)
 

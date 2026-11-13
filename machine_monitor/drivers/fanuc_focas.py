@@ -18,6 +18,7 @@ parameter 6710) as the "part finished" signal.
 """
 from __future__ import annotations
 
+import logging
 import ctypes as C
 import os
 import sys
@@ -30,6 +31,8 @@ EW_OK = 0
 EW_SOCKET = -16
 EW_HANDLE = -8
 
+
+log = logging.getLogger("fanuc")
 
 class ODBST(C.Structure):
     _fields_ = [("hdck", C.c_short), ("tmmode", C.c_short), ("aut", C.c_short), ("run", C.c_short),
@@ -148,6 +151,11 @@ class FanucFocasDriver(Driver):
         self.supports_seq = bool(cfg.get("read_sequence_number", False))
         # tool in the spindle (macro #4120, one small call per poll) + FANUC tool life groups (T0199 = group 1)
         self.read_tool = bool(cfg.get("read_tool", True))
+        # M00 / M01 stop: some machines (Puma 2600, 2026-11-13) keep reporting run = STRT while they wait at an
+        # M01 (orange light). The standard PMC signals DM00 / DM01 (F9.7 / F9.6, on while the control processes
+        # M00 / M01) show it. Read-only, one small PMC read per poll; switched off by itself if not available.
+        self.read_m0 = bool(cfg.get("read_m00_signals", True))
+        self._m0_fail = 0
         self.tool_life_ok = None          # unknown until the first check after connecting
         self._last_tool = None
         self._group = None
@@ -202,6 +210,12 @@ class FanucFocasDriver(Driver):
             if hasattr(L, fn):
                 getattr(L, fn).argtypes = argt
                 getattr(L, fn).restype = C.c_short
+        if hasattr(L, "pmc_rdpmcrng"):
+            L.pmc_rdpmcrng.argtypes = [C.c_ushort, C.c_short, C.c_short, C.c_ushort, C.c_ushort, C.c_ushort,
+                                       C.c_void_p]
+            L.pmc_rdpmcrng.restype = C.c_short
+        else:
+            self.read_m0 = False
         if hasattr(L, "cnc_rdseqnum"):
             L.cnc_rdseqnum.argtypes = [C.c_ushort, C.POINTER(ODBSEQ)]
             L.cnc_rdseqnum.restype = C.c_short
@@ -312,13 +326,34 @@ class FanucFocasDriver(Driver):
 
         tool, group = self._read_tool(L, h) if self.read_tool else (None, None)
 
+        m_stop = self._read_m_stop(L, h) if self.read_m0 and st.run == 3 and st.motion == 0 else None
+        if m_stop:
+            exec_state = ExecState.PAUSED           # waiting at M00 / M01 (control still says STRT)
+
         return Sample(
             ts=time.time(), online=True, exec_state=exec_state, mode=mode, alarm=alarm,
             main_program=main, current_program=current, part_count=parts, tool=tool, tool_group=group,
             extra={"run": st.run, "aut": st.aut, "motion": st.motion, "alarm": st.alarm,
                    "emergency": st.emergency, "running_no": run_no, "main_no": main_no, "seq_no": seq,
-                   "dnc": dnc},
+                   "dnc": dnc, "mstb": st.mstb, "m_stop": m_stop},
         )
+
+    def _read_m_stop(self, L, h):
+        """'M00' / 'M01' while the PMC signal DM00 (F9.7) / DM01 (F9.6) is on, else None. Never raises."""
+        buf = (C.c_ubyte * 16)()
+        try:
+            ret = L.pmc_rdpmcrng(h, 1, 0, 9, 9, 8 + 1, buf)       # adr type 1 = F, data type 0 = byte, F9
+        except Exception:
+            ret = -1
+        if ret != EW_OK:
+            self._m0_fail += 1
+            if self._m0_fail >= 5:
+                self.read_m0 = False
+                log.info("[%s] PMC F9 (M00/M01 signals) not readable (%s) - not used", self.cfg.get("id"), ret)
+            return None
+        self._m0_fail = 0
+        f9 = buf[8]                                                # IODBPMC: 4 shorts, then the data
+        return "M00" if f9 & 0x80 else ("M01" if f9 & 0x40 else None)
 
     # ------------------------------------------------------------ tools
     def _tool_life_available(self, L, h) -> bool:

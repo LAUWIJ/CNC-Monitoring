@@ -551,6 +551,28 @@ class FanucFiles(FileSession):
             raise self._err("cnc_pdf_del", ret)
 
 
+def program_header_name(path: str):
+    """Program name from a FANUC program's own header: '<TEST>' -> 'TEST', 'O1234 (BRACKET)' -> 'O1234'.
+    None when the file has no header line (then the file name is used)."""
+    try:
+        with open(path, "rb") as f:
+            head = f.read(4096)
+    except OSError:
+        return None
+    for line in head.replace(b"\r", b"\n").split(b"\n"):
+        t = line.strip()
+        if t in (b"", b"%"):
+            continue
+        m = re.match(rb"<([^<>]{1,32})>", t)
+        if m:
+            return m.group(1).decode("latin-1").strip() or None
+        m = re.match(rb"(O\d{1,8})\b", t, re.I)
+        if m:
+            return m.group(1).decode().upper()
+        return None
+    return None
+
+
 # --------------------------------------------------------------------------------------- HEIDENHAIN
 class HeidenhainFiles(FileSession):
     def open(self):
@@ -1344,6 +1366,11 @@ class TransferService:
     def start_send(self, mid, folder, name, upload_file, overwrite=False, pin="", client=""):
         if (self.machines.get(mid) or {}).get("control") == "siemens":
             name = (name or "").upper()          # SINUMERIK file names are upper case
+        if (self.machines.get(mid) or {}).get("control") == "fanuc" and not str(folder).lower().startswith(FanucFiles.CARD):
+            # FANUC CNC memory names a program by its header line, not by the PC file name: a file
+            # 0001.nc that starts with <TEST> becomes program TEST (as FANUC's Program Transfer Tool does).
+            # Only a file without a header gets the file name.
+            name = program_header_name(upload_file) or name
         try:
             m = self.check_send(mid, folder, name, overwrite, pin)
         except (ValueError, PermissionError) as e:

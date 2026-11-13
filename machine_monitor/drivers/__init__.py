@@ -12,6 +12,9 @@ def make_driver(cfg: dict) -> Driver:
     if control in ("fanuc", "focas"):
         from .fanuc_focas import FanucFocasDriver
         return FanucFocasDriver(cfg)
+    if control in ("mtconnect", "mtc"):
+        from .mtconnect import MTConnectDriver
+        return MTConnectDriver(cfg)
     if control in ("simulator", "sim"):
         from .simulator import SimulatedDriver
         return SimulatedDriver(cfg)

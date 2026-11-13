@@ -359,3 +359,15 @@ def test_memory_card_replace_keeps_a_backup_and_overwrites_without_delete(tmp_pa
     assert j["state"] == "done", j
     assert calls == ["fetch", ("send", True)] and b"NEW" in card["O7777.NC"]
     assert os.listdir(tmp_path / "transfer_backup" / "f1")
+
+
+def test_fanuc_program_name_from_header(tmp_path):
+    from machine_monitor.transfer import program_header_name, FanucFiles
+    cases = {b"%\n<TEST>\nG0 X0\n%": "TEST", b"\r\n%\r\nO1234 (BRACKET)\r\nG0\r\n%": "O1234",
+             b"G0 X0\nM30\n%": None, b"%\n<O7779.NC>\n%": "O7779.NC"}
+    for data, want in cases.items():
+        p = tmp_path / "0001.nc"
+        p.write_bytes(data)
+        assert program_header_name(str(p)) == want, data
+    # sent under its own name, the header is kept as it is
+    assert FanucFiles.prepare(b"%\n<TEST>\nG0 X0\n%", "TEST").split(b"\n")[1] == b"<TEST>"

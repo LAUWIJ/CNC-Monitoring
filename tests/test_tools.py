@@ -84,3 +84,26 @@ def test_program_tools_combines_sister_tools_of_a_group(tmp_path):
     tools = st.program_tools("m", "O1")
     assert [t["tool"] for t in tools] == ["G1", "505"]
     assert tools[0]["median_s"] == 30 and tools[0]["used_in"] == 3 and set(tools[0]["tools_seen"]) == {"101", "1313"}
+
+
+def test_fanuc_m01_from_pmc_f9():
+    """DM00 / DM01 = F9.7 / F9.6: a machine waiting at M01 while the control still says STRT shows as paused."""
+    import ctypes as C
+    from machine_monitor.drivers.fanuc_focas import FanucFocasDriver
+
+    class L:
+        val = 0x40
+
+        def pmc_rdpmcrng(self, h, adr, typ, s, e, n, buf):
+            assert (adr, typ, s, e, n) == (1, 0, 9, 9, 9)
+            C.cast(buf, C.POINTER(C.c_ubyte))[8] = self.val
+            return 0
+
+    d = FanucFocasDriver.__new__(FanucFocasDriver)
+    d.cfg, d.read_m0, d._m0_fail = {"id": "t"}, True, 0
+    lib = L()
+    assert d._read_m_stop(lib, 1) == "M01"
+    lib.val = 0x80
+    assert d._read_m_stop(lib, 1) == "M00"
+    lib.val = 0x10                                  # DM30 only
+    assert d._read_m_stop(lib, 1) is None
