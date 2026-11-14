@@ -19,8 +19,9 @@ Plain Python + SQLite. The web dashboard needs no internet connection.
 > FANUC 0i-D (system alarm, power cycle needed) - see `AI_HANDOVER.md` 5b. Test every new control with the
 > machine idle and someone at it. You use this software at your own risk (see the license: no warranty).
 
-> **Network.** The dashboard has no login. Run it only on a closed shop network, never exposed to the internet.
-> See `SECURITY.md`.
+> **Network.** Viewing the dashboard needs no login and nothing is encrypted (no HTTPS); only changing machines
+> needs the admin password. Run it only on a closed shop network, never exposed to the internet. See the
+> known limits in `SECURITY.md`.
 
 ## Quick start (no machines needed)
 
@@ -33,8 +34,9 @@ Open http://localhost:8080. Four simulated machines (Fanuc, Siemens, Heidenhain 
 
 1. Python **3.11 or newer** (`tomllib`). On a 64-bit Python, use `Fwlib64.dll` for Fanuc.
 2. `pip install -r requirements.txt`
-3. Copy `config.example.toml` to `config.toml` and fill in the IP addresses.
-4. `python run.py` (or double-click `start.bat`)
+3. `python run.py` (or double-click `start.bat`). The first start creates an empty `config.toml`.
+4. Add machines in the dashboard (**⚙ Settings**, see below) or copy `config.example.toml` to `config.toml` and
+   fill in the IP addresses.
 5. To run permanently: Windows Task Scheduler "At startup" running `start.bat`, or NSSM as a service.
 
 ### Raspberry Pi (permanent installation)
@@ -83,10 +85,29 @@ The program name the control is executing right now is **not** used to split cyc
   5. control stays in RESET for 5 s → *completed* or, if the machine normally gives signal 1–3 but didn't this time, *aborted*
 - **Program name**: the control's own main program where available. Otherwise the first program at cycle start, skipping names matching `subprogram_patterns` (O9xxx, L…, CYCLE…, TOOL_CHANGE), is kept for the whole cycle and marked *(latched)* in the log.
 - **Counter before the program end** (e.g. Lynx: counted, then the door opens, then M30): the cycle stays open until the program really ends, so the part is one cycle. If the program keeps running for `counter_end_window_s` (30 s) after the count - an **M99 loop / bar feeder** - the cycle is split exactly at the counter moment and a new one continues. History from before this fix: `python run.py --merge-split-cycles` (`fix_history_pi.bat`).
-- **Waiting for robot / operator**: per machine, `[[machine.wait]]` rules mark program names (e.g. a robot handshake macro `O9022` or a robot load program `LOAD_PRODUCT_0.H`) as waiting. The timeline shows *Waiting for robot* and *Waiting for operator* separately; that time is never counted in the cycle time (`action = "end"`: the part is done when the wait starts, `"pause"`: wait inside the cycle). The cycle log shows the waiting time and the time spent per sub-program/macro.
+- **Waiting for robot / operator**: per machine (Settings page, or `[[machine.wait]]` in `config.toml`), rules mark program names (e.g. a robot handshake macro `O9022` or a robot load program `LOAD_PRODUCT_0.H`) as waiting. The timeline shows *Waiting for robot* and *Waiting for operator* separately; that time is never counted in the cycle time (`action = "end"`: the part is done when the wait starts, `"pause"`: wait inside the cycle). The cycle log shows the waiting time and the time spent per sub-program/macro.
 - **Pallet machines (Siemens)**: `[machine.cycle_signal] block_regex = '\bM0?60\b'` ends the cycle at the M60 block and shows the clearance wait as *Waiting for operator*.
 - **Partial cycles**: a part that was already running when the monitor started, restarted (e.g. `deploy.bat`) or reconnected is logged as **Partial**: it counts as a part, but not for cycle-time statistics. `--merge-split-cycles` (`fix_history_pi.bat`) also marks such cycles in older history.
 - **Noise**: cycles with less than 3 s actual running time are ignored.
+
+## Settings page (machines in the browser)
+
+**⚙ Settings** (top right) adds, changes and removes machines: name, control, IP address/port, login, program
+transfer (off / browse + fetch / + send), the control-specific options, and the *waiting for robot/operator*
+rules (type a program name such as `9021` or `LOAD_PRODUCT_0.H`; a regular expression also works).
+*Test connection* tries the values before saving. After *Save* only that machine reconnects; the others keep
+running.
+
+- **Admin password**: chosen on the first visit to the page, stored hashed in `data/admin.json`. Forgotten?
+  `reset_admin_pi.bat` (or `python run.py --set-admin-password` on the monitor) sets a new one and logs out
+  every browser.
+- Changes are written to **`config.toml`**, line by line: comments and everything the page doesn't show
+  (OPC UA node overrides, cycle signals, transfer folders, `[defaults]`) stay as they are. The previous
+  version is kept in `data/config_backup/` (last 20). Passwords are never sent back to the browser.
+- **Raspberry Pi**: `deploy.bat` keeps a `config.toml` that was changed in the dashboard and copies it back to
+  the PC afterwards (your PC's version is kept as `config.toml.before_deploy`). If it was changed on both, the
+  dashboard version wins and the deploy says so.
+- `[defaults]`, `[server]` and `[transfer]` (PIN, backups) are still edited in `config.toml` (restart needed).
 
 ## Alarms & messages (machine detail view)
 

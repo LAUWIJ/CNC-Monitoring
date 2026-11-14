@@ -29,6 +29,7 @@ Safety (always, whatever the browser sends):
 """
 from __future__ import annotations
 
+import hmac
 import json
 import logging
 import os
@@ -1055,6 +1056,8 @@ class TransferService:
         self.data_dir = data_dir
         self.settings = settings or {}
         self.pin = str(self.settings.get("pin", "") or "")
+        from .admin import Attempts
+        self.pin_attempts = Attempts()          # wrong PINs per computer: 5 in 5 min, then that computer waits
         self.max_bytes = int(float(self.settings.get("max_mb", 200)) * 1024 * 1024)
         self.tmp = os.path.join(data_dir, "transfer_tmp")
         os.makedirs(self.tmp, exist_ok=True)
@@ -1076,6 +1079,13 @@ class TransferService:
         self.locks = {mid: threading.Lock() for mid in self.machines}
         self.jobs: dict = {}
         self.jlock = threading.Lock()
+
+    def set_machines(self, machines: list) -> None:
+        """New machine settings from the Settings page."""
+        with self.jlock:
+            self.machines = {m["id"]: m for m in machines}
+            for mid in self.machines:
+                self.locks.setdefault(mid, threading.Lock())
 
     # ---------------------------------------------------------------- helpers
     def _m(self, mid):
@@ -1345,13 +1355,17 @@ class TransferService:
         threading.Thread(target=run, daemon=True, name=f"fetch-{mid}").start()
         return self.job(job["id"])
 
-    def check_send(self, mid, folder, name, overwrite, pin):
+    def check_send(self, mid, folder, name, overwrite, pin, client=""):
         """Raises ValueError for anything the request may never do. Returns the machine config."""
         m = self._m(mid)
         if not self.can_send(m):
             raise ValueError('sending is switched off for this machine (config.toml: transfer = "send")')
-        if self.pin and str(pin or "") != self.pin:
-            raise PermissionError("wrong PIN")
+        if self.pin:
+            self.pin_attempts.check(client, "PINs")
+            if not hmac.compare_digest(str(pin or "").encode(), self.pin.encode()):
+                self.pin_attempts.failed(client)
+                raise PermissionError("wrong PIN")
+            self.pin_attempts.ok(client)
         if not NAME_RE.match(name or "") or name.strip(" .") != name:
             raise ValueError("file name may only use letters, digits, - _ . and spaces")
         if m.get("control") == "fanuc" and len(name) > 32:
@@ -1372,7 +1386,7 @@ class TransferService:
             # Only a file without a header gets the file name.
             name = program_header_name(upload_file) or name
         try:
-            m = self.check_send(mid, folder, name, overwrite, pin)
+            m = self.check_send(mid, folder, name, overwrite, pin, client)
         except (ValueError, PermissionError) as e:
             self.store.add_transfer(mid, "send", join(folder, name or "?"), None, "refused", str(e), client=client)
             os.remove(upload_file)

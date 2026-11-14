@@ -387,6 +387,30 @@ class Store:
                 self.db.commit()
                 self._live_written[mid] = now
 
+    def set_offline(self, mid: str) -> None:
+        """A machine switched off on the Settings page: close its open state and show it offline."""
+        now = time.time()
+        self.add_state(mid, "OFFLINE", now, None)
+        with self.lock:
+            prev = self._live.get(mid)
+            live = dict(prev[0]) if prev else {}
+            live.update(state="OFFLINE", online=False)
+            self._live[mid] = (live, prev[1] if prev else False, now)
+            self.db.execute("UPDATE machines SET live_json=?, updated_ts=? WHERE id=?",
+                            (json.dumps(live, default=str), now, mid))
+            self.db.commit()
+
+    def forget_machine(self, mid: str) -> None:
+        """A machine removed on the Settings page disappears from the dashboard. Its history (cycles, states,
+        alarms) stays in the database; adding a machine with the same ID shows it again."""
+        with self.lock:
+            self.db.execute("UPDATE state_segments SET end_ts=? WHERE machine_id=? AND end_ts IS NULL",
+                            (time.time(), mid))
+            self.db.execute("DELETE FROM machines WHERE id=?", (mid,))
+            self.db.commit()
+            self._live.pop(mid, None)
+            self._live_written.pop(mid, None)
+
     # ------------------------------------------------------------------- reads
     def typical(self, mid: str, program: str) -> dict:
         """Usual cycle time of a program on a machine (median of the last 10 completed cycles) and the end

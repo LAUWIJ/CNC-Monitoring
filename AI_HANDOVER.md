@@ -66,7 +66,10 @@ add a test with the observed pattern first.
 
 | path | role |
 |---|---|
-| `run.py` | entry point: `python run.py`, `--demo`, `--probe <id>`, `--probe-files <id>` (read-only list of the control's program folders), `--fetch-plc <id>`, `--merge-split-cycles` (history repair: merge counter fragments + mark partial cycles) |
+| `run.py` | entry point: `python run.py`, `--demo`, `--probe <id>`, `--probe-files <id>` (read-only list of the control's program folders), `--fetch-plc <id>`, `--merge-split-cycles` (history repair: merge counter fragments + mark partial cycles), `--db-stats`, `--set-admin-password`. `Runtime` restarts only the machine whose settings changed |
+| `machine_monitor/settings.py` | Settings page backend: editable fields per control (`FIELDS`), validation, save/delete, connection test with unsaved values, wait-rule names <-> regex (`9021` <-> `^O?9021$`) |
+| `machine_monitor/config_edit.py` | line-level edits of `[[machine]]` blocks in config.toml (comments kept); every edit re-parsed and checked that nothing else changed |
+| `machine_monitor/admin.py` | admin password (PBKDF2 hash in `data/admin.json`), login tokens, `Attempts`: 5 wrong tries per IP in 5 min -> that IP waits (also used for the transfer PIN) |
 | `machine_monitor/transfer.py` | program transfer (see 5b): one `FileSession` per control (`FanucFiles`, `HeidenhainFiles`, `SiemensFiles`, `DemoFiles`), `TransferService` with all safety rules, background jobs, history in table `transfers` |
 | `machine_monitor/model.py` | `Sample`, `ExecState`, `Mode`, `MachineState`, `display_name()` |
 | `machine_monitor/engine.py` | cycle/state detection (see 2) |
@@ -78,7 +81,7 @@ add a test with the observed pattern first.
 | `config.example.toml` | all options with comments; copy to `config.toml` |
 | `config.demo.toml` | 4 simulated machines for `--demo` |
 | `start.bat`, `probe.bat` | Windows run / test one machine |
-| `setup_pi.bat`, `deploy.bat`, `rollback_pi.bat`, `logs_pi.bat`, `probe_pi.bat`, `probe_files_pi.bat`, `opcua_rights_pi.bat`, `backup_pi.bat`, `fix_history_pi.bat` | Raspberry Pi installation and maintenance from the Windows PC |
+| `setup_pi.bat`, `deploy.bat`, `rollback_pi.bat`, `logs_pi.bat`, `probe_pi.bat`, `probe_files_pi.bat`, `opcua_rights_pi.bat`, `backup_pi.bat`, `fix_history_pi.bat`, `db_stats_pi.bat`, `reset_admin_pi.bat` | Raspberry Pi installation and maintenance from the Windows PC |
 | `pi/` | Pi side: `setup_pi.sh`, `after_deploy.sh`, `rollback.sh`, `backup.py`, systemd user units; `pi_settings.bat` = Pi address |
 
 ## 4. Setup for a new site
@@ -369,6 +372,34 @@ add a test with the observed pattern first.
 - Planned next: storage watch - warn in the dashboard from ~80 % disk use, offer an export per month of the
   oldest detail (state periods first, cycles later - medians need them), then remove detail of days that are
   already in the daily summary (never automatic), VACUUM while there is still room. Count backups too.
+
+## 5e. Settings page (Nov 2026)
+
+- ⚙ Settings in the header: admin password (first visit sets it; `reset_admin_pi.bat` /
+  `run.py --set-admin-password` resets it and invalidates logins), then a machine list with add / edit / remove,
+  wait rules, program transfer mode and a *Test connection* (connect + one read with the form's values, 25 s
+  limit, one test at a time). API: `GET /api/admin`, `POST /api/admin/{setup,login,logout}`, `GET /api/settings`,
+  `POST /api/settings/{machine,delete,test}` with header `X-Admin-Token`.
+- **config.toml stays the only config** (user's choice). `config_edit` changes only the lines of the edited
+  machine: values are replaced in place (comment and its column kept), new keys go after the machine's last
+  key, wait rules are rewritten as `[[machine.wait]]` tables at the end of the block, a new machine is appended
+  at the end of the file. Block boundaries: comment lines after the last blank line before the next header
+  belong to what follows (section separators). After an edit the file is parsed again; if anything outside that
+  machine changed, or the machine is not exactly as intended, nothing is written. Previous version ->
+  `data/config_backup/` (last 20).
+- Only `FIELDS` are edited; other keys (`nodes`, `cycle_signal`, `transfer_roots`, ...) are kept and listed as
+  "also set in config.toml". A default that wasn't written is not added; a key that was written is updated even
+  to its default. Switching the control type removes the old type's FIELDS keys. Secrets are never returned.
+- Apply: `Runtime.reload()` compares old/new machine dicts and only stops/starts the changed machine's worker
+  (its open cycle is lost, like a restart for that machine). Removed machine: `store.forget_machine` (row out of
+  `machines`, history kept, comes back with the same id). Disabled: shown OFFLINE. `[defaults]`/`[server]`/
+  `[transfer]` changes still need a restart.
+- **Deploy and config.toml**: the Pi's copy can now change. `after_deploy.sh` compares it with
+  `data/config.deployed.toml` (written at each deploy, and by the first dashboard save if missing): changed on
+  the Pi -> kept; changed on both -> Pi kept, warning; `deploy.bat` then copies the Pi's config back to the PC
+  (old PC copy -> `config.toml.before_deploy`). The first deploy of this version still runs the old
+  after_deploy.sh (it runs the copy already on the Pi) - harmless, as nothing was changed in the dashboard yet.
+- First start without config.toml creates a minimal one, so a new site can add everything in the browser.
 
 ## 6. Raspberry Pi (permanent installation)
 

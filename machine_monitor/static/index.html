@@ -193,6 +193,35 @@ main { padding: 20px 24px 40px; display: grid; gap: 20px; }
 #xDlg label { display: flex; gap: 8px; align-items: center; margin-top: 10px; font-size: 13px; }
 #xDlg input { font: inherit; padding: 5px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); width: 120px; }
 .xdlgb { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+/* settings */
+#setDlg { border: 1px solid var(--border); border-radius: 12px; background: var(--surface); color: var(--text);
+  width: min(860px, 96vw); max-height: 92vh; padding: 18px 22px; }
+#setDlg::backdrop { background: rgba(0,0,0,.35); }
+.sethd { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 8px; }
+.sethd h2 { margin: 0; }
+#setDlg input[type=text], #setDlg input[type=password], #setDlg input[type=number], #setDlg select {
+  font: inherit; padding: 5px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); }
+#setDlg input[type=text], #setDlg input[type=password], #setDlg input[type=number] { width: 100%; }
+.sgrid { display: grid; grid-template-columns: 210px minmax(0, 1fr); gap: 8px 14px; align-items: start; margin: 12px 0; }
+.sgrid > label { padding-top: 6px; font-size: 13px; color: var(--text2); }
+.sgrid .shelp { color: var(--muted); font-size: 12px; margin-top: 3px; }
+.sgrid .chk { padding-top: 6px; display: flex; gap: 8px; align-items: center; }
+.ssec { font-size: 12px; font-weight: 650; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; margin: 18px 0 6px; }
+.swait { display: grid; grid-template-columns: 120px minmax(0, 1fr) 120px 200px 30px; gap: 6px; align-items: center; margin-bottom: 6px; }
+.sbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 16px; }
+.sbar .spacer { flex: 1; }
+.btn.danger { background: var(--surface); color: var(--alarm); border-color: color-mix(in srgb, var(--alarm) 45%, var(--border)); }
+.smsg { margin-top: 10px; font-size: 13px; }
+.smsg.err { color: var(--alarm); }
+.smsg.ok { color: var(--running); }
+#setDlg pre { background: var(--bg); border: 1px solid var(--grid); border-radius: 8px; padding: 8px 10px; font-size: 12px;
+  white-space: pre-wrap; margin: 10px 0 0; }
+#setDlg table { width: 100%; border-collapse: collapse; font-size: 13px; }
+#setDlg th { text-align: left; font-weight: 600; color: var(--muted); font-size: 12px; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+#setDlg td { padding: 7px 8px; border-bottom: 1px solid var(--grid); }
+#setDlg td.r { text-align: right; }
+.slogin { display: grid; gap: 10px; max-width: 340px; margin: 10px 0; }
+@media (max-width: 700px) { .sgrid { grid-template-columns: 1fr; } .swait { grid-template-columns: 1fr 1fr; } }
 .card .tlife { margin-top: 8px; font-size: 12px; color: var(--text2); padding: 3px 8px; border-radius: 6px;
   background: var(--surface2, rgba(127,127,127,.08)); display: inline-block; }
 .card .tlife.low { background: color-mix(in srgb, var(--paused, #e8a33d) 22%, transparent); color: var(--text); }
@@ -299,6 +328,7 @@ tr.sel { background: var(--grid); }
   <input type="search" id="search" placeholder="Search part / program (all history)…" autocomplete="off">
   <div class="spacer"></div>
   <span class="updated" id="updated"></span>
+  <button type="button" class="btn sec" id="setBtn" title="Add and change machines">⚙ Settings</button>
 </header>
 
 <main>
@@ -339,6 +369,11 @@ tr.sel { background: var(--grid); }
     <label id="xPinRow" hidden>PIN <input type="password" id="xPin" inputmode="numeric" autocomplete="off"></label>
     <div class="xdlgb"><button value="cancel" class="btn sec">Cancel</button><button value="ok" class="btn" id="xDlgOk">Replace</button></div>
   </form></dialog>
+
+  <dialog id="setDlg" aria-labelledby="setTitle">
+    <div class="sethd"><h2 id="setTitle">Settings</h2><button type="button" class="xib" id="setClose" aria-label="Close">✕</button></div>
+    <div id="setBody"></div>
+  </dialog>
 
   <section class="panel" id="detail" hidden>
     <div class="hd"><h2 id="detailTitle">Machine</h2></div>
@@ -1610,6 +1645,165 @@ refreshAll().then(() => {
   if (m0 && overview.machines.some((m) => m.id === m0)) selectMachine(m0);
   if (q0) { $("#search").value = q0; runSearch(); }
 });
+
+// ----------------------------------------------------------------- settings (machines, wait rules)
+const SET = { token: sessionStorage.getItem("mmAdmin") || "", data: null, edit: null };
+async function sapi(path, body) {
+  const r = await fetch(path, body === undefined ? { headers: { "X-Admin-Token": SET.token } }
+    : { method: "POST", headers: { "Content-Type": "application/json", "X-Admin-Token": SET.token }, body: JSON.stringify(body) });
+  const j = await r.json().catch(() => ({}));
+  if (r.status === 403 && /login needed/.test(j.error || "")) { SET.token = ""; sessionStorage.removeItem("mmAdmin"); throw Object.assign(new Error(j.error), { login: true }); }
+  if (!r.ok) throw new Error(j.error || `error ${r.status}`);
+  return j;
+}
+const setBody = $("#setBody");
+function setMsg(text, kind) {
+  let el = setBody.querySelector(".smsg");
+  if (!el) { el = document.createElement("div"); el.className = "smsg"; setBody.appendChild(el); }
+  el.className = "smsg " + (kind || ""); el.textContent = text || "";
+}
+async function openSettings() {
+  if (!$("#setDlg").open) $("#setDlg").showModal();
+  if (!SET.token) return showLogin();
+  try { SET.data = await sapi("api/settings"); showList(); }
+  catch (e) { if (e.login) showLogin(); else { setBody.innerHTML = ""; setMsg(e.message, "err"); } }
+}
+async function showLogin() {
+  $("#setTitle").textContent = "Settings";
+  const st = await fetch("api/admin").then((r) => r.json()).catch(() => ({}));
+  if (st.available === false) { setBody.innerHTML = `<p>Settings are not available in this version.</p>`; return; }
+  const first = !st.password_set;
+  setBody.innerHTML = `<form class="slogin" id="sLogin" autocomplete="off">
+    ${first ? `<p style="margin:0">Choose an admin password for this page. Everyone who changes machines needs it.
+      Forgotten? Run <b>reset_admin_pi.bat</b> on the PC (or <code>python run.py --set-admin-password</code> on the monitor).</p>` :
+      `<p style="margin:0">Admin password needed to change machines.</p>`}
+    <input type="password" id="sPw" placeholder="${first ? "New admin password (6+ characters)" : "Admin password"}" autocomplete="${first ? "new-password" : "current-password"}">
+    ${first ? `<input type="password" id="sPw2" placeholder="Same password again" autocomplete="new-password">` : ""}
+    <div><button class="btn" type="submit">${first ? "Set password" : "Log in"}</button></div></form>`;
+  $("#sPw").focus();
+  $("#sLogin").onsubmit = async (e) => {
+    e.preventDefault();
+    const pw = $("#sPw").value;
+    if (first && pw !== $("#sPw2").value) return setMsg("The two passwords are not the same", "err");
+    try {
+      const r = await sapi(first ? "api/admin/setup" : "api/admin/login", { password: pw });
+      SET.token = r.token; sessionStorage.setItem("mmAdmin", r.token); openSettings();
+    } catch (err) { setMsg(err.message, "err"); }
+  };
+}
+const ctlLabel = (id) => (SET.data.controls.find((c) => c.id === id) || {}).label || String(id || "").toUpperCase();
+const xferLabel = { off: "off", read: "browse + fetch", send: "browse + fetch + send" };
+function showList() {
+  $("#setTitle").textContent = "Machines";
+  const ms = SET.data.machines;
+  setBody.innerHTML = `<p class="hint" style="margin:0 0 10px">Changes are saved in ${esc(SET.data.config)} on the monitor (comments in it are kept).
+    Only the machine you change reconnects; the others keep running.</p>
+    <table><thead><tr><th>Machine</th><th>Control</th><th>Address</th><th>Transfer</th><th>Wait rules</th><th></th></tr></thead><tbody>
+    ${ms.map((m, i) => `<tr><td><b>${esc(m.values.name || m.id)}</b> <span class="hint">${esc(m.id)}${m.values.enabled === false ? " · off" : ""}</span></td>
+      <td>${esc(String(m.control).toUpperCase())}</td><td>${esc(m.values.host || "")}${m.values.port ? ":" + esc(m.values.port) : ""}</td>
+      <td>${esc(m.values.transfer ? xferLabel[m.values.transfer] : "-")}</td><td>${m.wait.length || ""}</td>
+      <td class="r"><button type="button" class="btn sec" data-edit="${i}">Edit</button></td></tr>`).join("") ||
+      `<tr><td colspan="6" class="hint">No machines yet.</td></tr>`}</tbody></table>
+    <div class="sbar"><button type="button" class="btn" id="sAdd">+ Add machine</button><span class="spacer"></span>
+      <button type="button" class="btn sec" id="sLogout">Log out</button></div>`;
+  setBody.querySelectorAll("[data-edit]").forEach((b) => b.onclick = () => showEdit(ms[+b.dataset.edit]));
+  $("#sAdd").onclick = () => {
+    let n = ms.length + 1; while (ms.some((m) => m.id === "m" + n)) n++;
+    showEdit({ id: "m" + n, control: "fanuc", values: {}, wait: [], other: [], isNew: true });
+  };
+  $("#sLogout").onclick = async () => { try { await sapi("api/admin/logout", {}); } catch (e) {} SET.token = ""; sessionStorage.removeItem("mmAdmin"); $("#setDlg").close(); };
+}
+function fieldHtml(f, m) {
+  const v = m.values[f.key], id = "sf_" + f.key;
+  const dflt = m.isNew ? (f.key === "transfer" ? (m.control === "fanuc" ? "off" : "read") : f.default) : undefined;
+  const val = v === undefined || v === null ? (dflt ?? "") : v;
+  let inp;
+  if (f.type === "bool") inp = `<div class="chk"><input type="checkbox" id="${id}" ${val === true || (val === "" && f.default) ? "checked" : ""}></div>`;
+  else if (f.type === "select") inp = `<select id="${id}">${f.options.map(([k, l]) => `<option value="${esc(k)}" ${String(val) === k ? "selected" : ""}>${esc(l)}</option>`).join("")}</select>`;
+  else if (f.type === "password") inp = `<input type="password" id="${id}" autocomplete="new-password" placeholder="${v && v.set ? "(unchanged - type to replace)" : ""}">` +
+    (v && v.set ? `<label class="shelp"><input type="checkbox" id="${id}_clear"> remove the stored password</label>` : "");
+  else if (f.type === "int") inp = `<input type="number" id="${id}" value="${esc(val)}" placeholder="${f.key === "port" ? esc((SET.data.controls.find((c) => c.id === m.control) || {}).port || "") : ""}">`;
+  else inp = `<input type="text" id="${id}" value="${esc(val === false ? "false" : val)}">`;
+  const help = (f.help_for || {})[m.control] || f.help;
+  return `<label for="${id}">${esc(f.label)}</label><div>${inp}${help ? `<div class="shelp">${esc(help)}</div>` : ""}</div>`;
+}
+function readFields(m) {
+  const vals = {}, clear = [];
+  for (const f of SET.data.fields) {
+    if (f.controls && !f.controls.includes(m.control)) continue;
+    const el = $("#sf_" + f.key); if (!el) continue;
+    vals[f.key] = f.type === "bool" ? el.checked : el.value;
+    if (f.type === "password" && $("#sf_" + f.key + "_clear")?.checked) clear.push(f.key);
+  }
+  return { vals, clear };
+}
+function waitRow(r) {
+  return `<div class="swait">
+    <select data-w="on"><option value="program" ${r.on !== "block" ? "selected" : ""}>Program</option><option value="block" ${r.on === "block" ? "selected" : ""}>NC block</option></select>
+    <input type="text" data-w="value" value="${esc(r.value || "")}" placeholder="e.g. 9021 or LOAD_PRODUCT_0.H">
+    <select data-w="reason"><option value="robot" ${r.reason === "robot" ? "selected" : ""}>Robot</option><option value="operator" ${r.reason !== "robot" ? "selected" : ""}>Operator</option></select>
+    <select data-w="action"><option value="pause" ${r.action !== "end" ? "selected" : ""}>Pause (inside the part)</option><option value="end" ${r.action === "end" ? "selected" : ""}>End (part is done)</option></select>
+    <button type="button" class="xib" data-wdel title="Remove this rule" aria-label="Remove this rule">✕</button></div>`;
+}
+function readWait() {
+  return [...setBody.querySelectorAll(".swait")].map((row) => Object.fromEntries(
+    [...row.querySelectorAll("[data-w]")].map((el) => [el.dataset.w, el.value]))).filter((r) => r.value.trim());
+}
+function showEdit(m) {
+  SET.edit = m;
+  $("#setTitle").textContent = m.isNew ? "Add machine" : `Edit ${m.values.name || m.id}`;
+  const fields = SET.data.fields.filter((f) => !f.controls || f.controls.includes(m.control));
+  const main = fields.filter((f) => ["name", "host", "port", "enabled", "username", "password", "security"].includes(f.key));
+  const more = fields.filter((f) => !main.includes(f));
+  setBody.innerHTML = `<div class="sgrid">
+      <label for="sId">ID</label><div>${m.isNew ? `<input type="text" id="sId" value="${esc(m.id)}"><div class="shelp">Short and fixed - the history is stored under it (e.g. m14)</div>` : `<div class="chk"><b>${esc(m.id)}</b></div>`}</div>
+      <label for="sCtl">Control</label><div><select id="sCtl">${SET.data.controls.map((c) => `<option value="${esc(c.id)}" ${c.id === m.control ? "selected" : ""}>${esc(c.label)}</option>`).join("")}
+        ${SET.data.controls.some((c) => c.id === m.control) ? "" : `<option value="${esc(m.control)}" selected>${esc(String(m.control).toUpperCase())}</option>`}</select></div>
+      ${main.map((f) => fieldHtml(f, m)).join("")}</div>
+    <div class="ssec">Waiting for robot / operator</div>
+    <p class="hint" style="margin:0 0 8px">While one of these programs runs (as the main program or as a sub-program / macro) in automatic mode,
+      the machine shows as waiting and that time is not counted in the cycle time. <b>Pause</b>: the wait is inside the part (e.g. a robot
+      handshake macro). <b>End</b>: the part is done when the wait starts (a load program between parts).</p>
+    <div id="sWait">${m.wait.map(waitRow).join("")}</div>
+    <button type="button" class="btn sec" id="sWaitAdd">+ Add wait rule</button>
+    <div class="ssec">More</div>
+    <div class="sgrid">${more.map((f) => fieldHtml(f, m)).join("")}</div>
+    ${m.other && m.other.length ? `<p class="hint">Also set in ${esc(SET.data.config)} (change there): ${m.other.map(esc).join(", ")}</p>` : ""}
+    <div class="sbar"><button type="button" class="btn" id="sSave">${m.isNew ? "Add machine" : "Save"}</button>
+      <button type="button" class="btn sec" id="sTest">Test connection</button>
+      <button type="button" class="btn sec" id="sBack">Back</button><span class="spacer"></span>
+      ${m.isNew ? "" : `<button type="button" class="btn danger" id="sDel">Remove machine</button>`}</div>
+    <div id="sOut"></div>`;
+  const keep = () => { const { vals } = readFields(m); Object.assign(m.values, vals); m.wait = readWait(); if (m.isNew) m.id = $("#sId").value.trim(); };
+  $("#sCtl").onchange = () => { keep(); m.control = $("#sCtl").value; showEdit(m); };
+  $("#sWaitAdd").onclick = () => { $("#sWait").insertAdjacentHTML("beforeend", waitRow({ reason: "robot", action: "pause" })); bindWait(); $("#sWait").lastElementChild.querySelector("input").focus(); };
+  const bindWait = () => setBody.querySelectorAll("[data-wdel]").forEach((b) => b.onclick = () => b.parentElement.remove());
+  bindWait();
+  const payload = () => { const { vals, clear } = readFields(m); return { id: m.isNew ? $("#sId").value.trim() : m.id, new: !!m.isNew, control: $("#sCtl").value, values: vals, clear, wait: readWait() }; };
+  const out = (html) => { $("#sOut").innerHTML = html; $("#sOut").scrollIntoView({ block: "nearest" }); };
+  $("#sBack").onclick = () => openSettings();
+  $("#sTest").onclick = async () => {
+    const b = $("#sTest"); b.disabled = true; out(`<p class="smsg">Connecting… (up to 25 s)</p>`);
+    try { const r = await sapi("api/settings/test", payload());
+      out(`<pre>${esc(r.lines.join("\n"))}</pre><p class="smsg ${r.ok ? "ok" : "err"}">${r.ok ? "Connection works." : "No working connection."}</p>`); }
+    catch (e) { if (e.login) return showLogin(); out(`<p class="smsg err">${esc(e.message)}</p>`); }
+    b.disabled = false;
+  };
+  $("#sSave").onclick = async () => {
+    const b = $("#sSave"); b.disabled = true;
+    try { const r = await sapi("api/settings/machine", payload());
+      SET.data = await sapi("api/settings"); showList();
+      setMsg(r.changed === false ? "Nothing changed." : "Saved - the machine reconnects with the new settings.", "ok"); refreshAll();
+    } catch (e) { if (e.login) return showLogin(); out(`<p class="smsg err">${esc(e.message)}</p>`); b.disabled = false; }
+  };
+  if ($("#sDel")) $("#sDel").onclick = async () => {
+    if (!confirm(`Remove ${m.values.name || m.id} from the monitor? It disappears from the dashboard; its history stays in the database and comes back if a machine with ID ${m.id} is added again.`)) return;
+    try { await sapi("api/settings/delete", { id: m.id }); SET.data = await sapi("api/settings"); showList(); setMsg("Machine removed.", "ok"); refreshAll(); }
+    catch (e) { if (e.login) return showLogin(); out(`<p class="smsg err">${esc(e.message)}</p>`); }
+  };
+}
+$("#setBtn").onclick = openSettings;
+$("#setClose").onclick = () => $("#setDlg").close();
 setInterval(refreshLive, 3000);
 setInterval(() => refreshAll(true), 30000);
 setInterval(() => overview && renderCards(), 1000);

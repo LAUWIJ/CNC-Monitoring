@@ -35,7 +35,7 @@ def cached(key, fn, span: float):
     return val
 
 
-def make_handler(store: Store, plc_jobs=None, transfers=None, about=None):
+def make_handler(store: Store, plc_jobs=None, transfers=None, about=None, settings=None, defaults=None):
     class H(BaseHTTPRequestHandler):
         def log_message(self, *a):
             pass
@@ -102,6 +102,12 @@ def make_handler(store: Store, plc_jobs=None, transfers=None, about=None):
                     return self._json(plc_jobs.status(mid))
                 if u.path.startswith("/api/transfer"):
                     return self._transfer_get(u.path, q, mid)
+                if u.path == "/api/admin":
+                    return self._json({"available": settings is not None,
+                                       "password_set": bool(settings and settings.admin.is_set())})
+                if u.path == "/api/settings":
+                    self._admin()
+                    return self._json(settings.machines())
                 if u.path == "/api/alarms":
                     if not mid:
                         return self._send(400, b'{"error": "machine required"}', "application/json")
@@ -127,8 +133,36 @@ def make_handler(store: Store, plc_jobs=None, transfers=None, about=None):
                     return self._send(200, buf.getvalue().encode("utf-8-sig"), "text/csv; charset=utf-8",
                                       {"Content-Disposition": "attachment; filename=cycles.csv"})
                 self._send(404, b"not found", "text/plain")
+            except PermissionError as e:
+                self._send(403, json.dumps({"error": str(e)}).encode(), "application/json")
             except Exception as e:
                 self._send(500, json.dumps({"error": str(e)}).encode(), "application/json")
+
+        # ---------------------------------------------------------------- settings (admin password)
+        def _admin(self):
+            if settings is None:
+                raise PermissionError("settings are not available")
+            settings.admin.check(self.headers.get("X-Admin-Token", ""))
+
+        def _settings_post(self, path, body):
+            if settings is None:
+                raise PermissionError("settings are not available")
+            adm = settings.admin
+            if path == "/api/admin/setup":
+                return self._json({"token": adm.setup(str(body.get("password", "")), self.client_address[0])})
+            if path == "/api/admin/login":
+                return self._json({"token": adm.login(str(body.get("password", "")), self.client_address[0])})
+            if path == "/api/admin/logout":
+                adm.logout(self.headers.get("X-Admin-Token", ""))
+                return self._json({"ok": True})
+            self._admin()
+            if path == "/api/settings/machine":
+                return self._json(settings.save(body))
+            if path == "/api/settings/delete":
+                return self._json(settings.delete(str(body.get("id", ""))))
+            if path == "/api/settings/test":
+                return self._json(settings.test(body, defaults))
+            return self._send(404, b"not found", "text/plain")
 
         # ---------------------------------------------------------------- program transfer
         def _transfer_get(self, path, q, mid):
@@ -193,8 +227,10 @@ def make_handler(store: Store, plc_jobs=None, transfers=None, about=None):
             try:
                 if u.path == "/api/transfer/send":
                     return self._transfer_send(q)
-                n = min(int(self.headers.get("Content-Length") or 0), 10000)
+                n = min(int(self.headers.get("Content-Length") or 0), 20000)
                 body = json.loads(self.rfile.read(n) or b"{}")
+                if u.path.startswith(("/api/admin/", "/api/settings/")):
+                    return self._settings_post(u.path, body)
                 if u.path == "/api/plc-fetch":
                     if not plc_jobs:
                         return self._send(400, b'{"error": "not available"}', "application/json")
@@ -221,9 +257,10 @@ def make_handler(store: Store, plc_jobs=None, transfers=None, about=None):
     return H
 
 
-def serve(store: Store, host: str, port: int, plc_jobs=None, transfers=None, source_url=None) -> ThreadingHTTPServer:
+def serve(store: Store, host: str, port: int, plc_jobs=None, transfers=None, source_url=None,
+          settings=None, defaults=None) -> ThreadingHTTPServer:
     from . import __version__, LICENSE, SOURCE_URL
     about = {"version": __version__, "license": LICENSE, "source_url": source_url or SOURCE_URL}
-    srv = ThreadingHTTPServer((host, port), make_handler(store, plc_jobs, transfers, about))
+    srv = ThreadingHTTPServer((host, port), make_handler(store, plc_jobs, transfers, about, settings, defaults))
     srv.daemon_threads = True
     return srv

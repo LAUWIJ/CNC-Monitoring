@@ -327,6 +327,11 @@ class PlcJobs:
             except Exception as e:
                 log.warning("[%s] PLC file clean-up failed: %s", mid, e)
 
+    def set_machines(self, machines: list) -> None:
+        """New machine settings from the Settings page."""
+        with self.lock:
+            self.machines = {m["id"]: m for m in machines if m.get("control") == "heidenhain"}
+
     def dest(self, mid: str) -> str:
         return os.path.join(self.data_dir, f"plc_{mid}")
 

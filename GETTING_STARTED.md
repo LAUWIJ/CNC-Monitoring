@@ -23,9 +23,11 @@ Working with an AI assistant? Give it **AI_HANDOVER.md** first.
 
 ## 3. Your own machines
 
-1. Copy `config.example.toml` to **`config.toml`** and fill in your machines (one `[[machine]]` block each).
+1. Add your machines. Either in the dashboard: start the monitor (step 4), click **⚙ Settings** (top right),
+   choose an admin password and use **+ Add machine** - with a *Test connection* button. Or by hand: copy
+   `config.example.toml` to **`config.toml`** and fill in one `[[machine]]` block per machine.
    - `id`: short and permanent (it keys the history), `name`: free text, can change any time.
-   - `enabled = false` skips a machine for now.
+   - `enabled = false` (or untick *Monitor this machine*) skips a machine for now.
 2. **FANUC machines**: on the Raspberry Pi nothing to do - FANUC's Linux library for the Pi is included in
    `FOCAS\`. To run the monitor on Windows, get the FOCAS2 library (FANUC part number **A02B-0207-K737**)
    from FANUC / your machine builder and put it in `FOCAS\` (see `FOCAS\README.txt`).

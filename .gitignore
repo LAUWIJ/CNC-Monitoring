@@ -1,5 +1,6 @@
 # Local / site-specific - never in the repository
 config.toml
+config.toml.*
 pi/pi_settings.local.bat
 data/
 backups/

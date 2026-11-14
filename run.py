@@ -19,6 +19,72 @@ from machine_monitor.web import serve
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
+NEW_CONFIG = """# Created by the monitor on its first start. Machines are added in the dashboard (Settings, top right)
+# or by hand - config.example.toml explains every setting.
+
+[server]
+host = "0.0.0.0"          # reachable from other PCs on the network
+port = 8080
+database = "data/monitor.db"
+
+[defaults]
+poll_interval_s = 1.0
+"""
+
+
+def _lower_control(cfg):
+    for m in cfg.get("machine", []):
+        if isinstance(m.get("control"), str):
+            m["control"] = m["control"].strip().lower()
+    return cfg
+
+
+class Runtime:
+    """The running machine workers. After a change on the Settings page only the machine that changed is
+    stopped and started again with its new settings; the other machines keep running undisturbed."""
+
+    def __init__(self, cfg_path, cfg, store):
+        self.cfg_path, self.cfg, self.store = cfg_path, cfg, store
+        self.workers: dict = {}
+        self.plc_jobs = self.transfers = self.settings = None
+        self.lock = threading.Lock()
+
+    def reload(self, mid=None):
+        with self.lock:
+            with open(self.cfg_path, "rb") as f:
+                new = _lower_control(tomllib.load(f))
+            defaults = self.cfg.get("defaults", {})       # [defaults] changes still need a restart
+            old_m = {m["id"]: m for m in self.cfg.get("machine", [])}
+            new_m = {m["id"]: m for m in new.get("machine", [])}
+            for i in sorted(set(old_m) | set(new_m)):
+                if old_m.get(i) == new_m.get(i):
+                    continue
+                w = self.workers.pop(i, None)
+                if w is not None:
+                    w.stop_evt.set()
+                    w.join(20)
+                    logging.info("[%s] stopped for new settings", i)
+                m = new_m.get(i)
+                if m is None:
+                    self.store.forget_machine(i)
+                    logging.info("[%s] removed from the dashboard (its history stays in the database)", i)
+                elif m.get("enabled", True):
+                    try:
+                        w = MachineWorker(m, defaults, self.store)
+                        w.start()
+                        self.workers[i] = w
+                        logging.info("[%s] started with new settings", i)
+                    except Exception as e:
+                        logging.error("[%s] cannot start with the new settings: %s", i, e)
+                else:
+                    self.store.set_offline(i)
+            self.cfg = {**self.cfg, "machine": new.get("machine", [])}
+            active = [m for m in new.get("machine", []) if m.get("enabled", True)]
+            if self.transfers is not None:
+                self.transfers.set_machines([{**defaults, **m} for m in active])
+            if self.plc_jobs is not None:
+                self.plc_jobs.set_machines(active)
+
 
 def _card_list(m):
     """Memory card file names via cnc_rdmcdfinfo (verified read-only on the 2600LY)."""
@@ -160,6 +226,57 @@ def fanuc_card_test(cfg, cfg_path, argv):
     print("done - check the control screen for alarms.")
 
 
+
+def db_stats(db):
+    """--db-stats: read-only overview of the SQLite database (opened read-only, safe while the monitor runs)."""
+    import sqlite3
+
+    def mb(n):
+        return f"{n / 1048576:8.2f} MB"
+    print(f"database: {db}")
+    total = 0
+    for suf in ("", "-wal", "-shm"):
+        f = db + suf
+        if os.path.exists(f):
+            total += os.path.getsize(f)
+            print(f"  {os.path.basename(f):<20} {mb(os.path.getsize(f))}")
+    print(f"  {'total':<20} {mb(total)}")
+    main = os.path.getsize(db) if os.path.exists(db) else 0
+    con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    sizes = {}
+    try:
+        for name, b in con.execute("SELECT name, SUM(pgsize) FROM dbstat GROUP BY name"):
+            sizes[name] = b
+    except sqlite3.Error:
+        pass                                   # dbstat not compiled in: rows only
+    tables = [r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")]
+    print(f"\n  {'table':<16}{'rows':>10}{'size':>12}   period")
+    first = None
+    for t in tables:
+        n = con.execute(f'SELECT COUNT(*) FROM "{t}"').fetchone()[0]
+        cols = [c[1] for c in con.execute(f'PRAGMA table_info("{t}")')]
+        col = next((c for c in ("start_ts", "ts", "end_ts") if c in cols), None)
+        span = ""
+        if col and n:
+            lo, hi = con.execute(f'SELECT MIN({col}), MAX({col}) FROM "{t}"').fetchone()
+            if lo:
+                span = time.strftime("%Y-%m-%d", time.localtime(lo)) + " .. " + time.strftime("%Y-%m-%d", time.localtime(hi))
+                first = lo if first is None else min(first, lo)
+        idx = sum(v for k, v in sizes.items() if k != t and con.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='index' AND name=? AND tbl_name=?", (k, t)).fetchone())
+        size = mb(sizes.get(t, 0) + idx) if sizes else ""
+        print(f"  {t:<16}{n:>10}{size:>12}   {span}")
+    if first:
+        days = max((time.time() - first) / 86400, 1 / 24)
+        print(f"\n  recorded since {time.strftime('%Y-%m-%d', time.localtime(first))} ({days:.1f} days): "
+              f"about {main / days / 1048576:.2f} MB per day, {main / days * 365 / 1048576:.0f} MB per year "
+              f"(database file; the -wal file is temporary)")
+    rows = con.execute("SELECT machine_id, COUNT(*) FROM state_segments GROUP BY machine_id ORDER BY 2 DESC").fetchall() \
+        if "state_segments" in tables else []
+    if rows:
+        print("\n  state changes per machine: " + ", ".join(f"{m} {n}" for m, n in rows))
+    con.close()
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", default=os.path.join(HERE, "config.toml"))
@@ -184,6 +301,10 @@ def main():
     ap.add_argument("--fanuc-card-test", nargs="+", metavar=("MACHINE_ID", "N"),
                     help="FANUC test, READ-ONLY: read the first N entries (default 1) of the memory card file list "
                          "with cnc_rdmcdfinfo. Asks for confirmation; not used by the monitor or the dashboard.")
+    ap.add_argument("--db-stats", action="store_true",
+                    help="read-only: size of the database, rows and bytes per table, how much it grows per day")
+    ap.add_argument("--set-admin-password", action="store_true",
+                    help="set a new password for the dashboard's Settings page (also when it was forgotten)")
     ap.add_argument("--merge-split-cycles", action="store_true",
                     help="repair history: merge 'counted before program end' fragments, mark partially seen cycles")
     args = ap.parse_args()
@@ -202,16 +323,35 @@ def main():
     # protocol libraries are very chatty - only show their real problems
     for noisy in ("asyncua", "LSV2 Client", "pyLSV2"):
         logging.getLogger(noisy).setLevel(logging.ERROR)
+    if args.set_admin_password:
+        from machine_monitor.admin import set_password
+        if sys.stdin.isatty():
+            import getpass
+            pw = getpass.getpass("New admin password for the Settings page: ")
+            if getpass.getpass("Same password again: ") != pw:
+                sys.exit("the two passwords are not the same - nothing changed")
+        else:
+            pw = sys.stdin.readline().rstrip("\r\n")
+        try:
+            set_password(os.path.join(HERE, "data"), pw)
+        except ValueError as e:
+            sys.exit(str(e))
+        print("admin password set - browsers that were logged in must log in again")
+        return
+
     cfg_path = os.path.join(HERE, "config.demo.toml") if args.demo else args.config
+    if not os.path.exists(cfg_path) and not args.demo and cfg_path == os.path.join(HERE, "config.toml"):
+        # first start: an empty config, machines are added in the dashboard (Settings)
+        with open(cfg_path, "w", encoding="utf-8") as f:
+            f.write(NEW_CONFIG)
+        logging.info("created %s - add machines in the dashboard (Settings) or see config.example.toml", cfg_path)
     if not os.path.exists(cfg_path):
         sys.exit(f"config not found: {cfg_path}  (copy config.example.toml to config.toml)")
     with open(cfg_path, "rb") as f:
         cfg = tomllib.load(f)
     # control type in any capitals ("FANUC", "Siemens"): the code compares lowercase; the dashboard shows it
     # in capitals anyway
-    for m in cfg.get("machine", []):
-        if isinstance(m.get("control"), str):
-            m["control"] = m["control"].strip().lower()
+    _lower_control(cfg)
 
     if args.probe:
         from machine_monitor.drivers import make_driver
@@ -370,6 +510,11 @@ def main():
             sys.exit(1)
         return
 
+    if args.db_stats:
+        db = cfg.get("server", {}).get("database", "data/monitor.db")
+        db_stats(db if os.path.isabs(db) else os.path.join(HERE, db))
+        return
+
     if args.merge_split_cycles:
         db = cfg.get("server", {}).get("database", "data/monitor.db")
         db = db if os.path.isabs(db) else os.path.join(HERE, db)
@@ -395,7 +540,7 @@ def main():
     store = Store(db)
     defaults = cfg.get("defaults", {})
 
-    workers = []
+    rt = Runtime(cfg_path, cfg, store)
     for m in cfg.get("machine", []):
         if not m.get("enabled", True):
             continue
@@ -403,7 +548,8 @@ def main():
         if fresh_demo and m.get("control") == "simulator":
             logging.info("generating %.0f h of simulated history for %s ...", args.backfill_hours, m["id"])
             w.backfill(args.backfill_hours)
-        workers.append(w)
+        rt.workers[m["id"]] = w
+    workers = list(rt.workers.values())
     for w in workers:
         w.start()
 
@@ -434,10 +580,15 @@ def main():
     host, port = server.get("host", "0.0.0.0"), int(server.get("port", 8080))
     from machine_monitor.plc_fetch import PlcJobs
     from machine_monitor.transfer import TransferService
+    from machine_monitor.admin import Admin
+    from machine_monitor.settings import SettingsService
     active = [m for m in cfg.get("machine", []) if m.get("enabled", True)]
-    srv = serve(store, host, port, PlcJobs(active, os.path.join(HERE, "data")),
-                TransferService([{**defaults, **m} for m in active], store, os.path.join(HERE, "data"),
-                                cfg.get("transfer", {})), server.get("source_url"))
+    rt.plc_jobs = PlcJobs(active, os.path.join(HERE, "data"))
+    rt.transfers = TransferService([{**defaults, **m} for m in active], store, os.path.join(HERE, "data"),
+                                   cfg.get("transfer", {}))
+    rt.settings = SettingsService(cfg_path, os.path.join(HERE, "data"), Admin(os.path.join(HERE, "data")),
+                                  rt.reload)
+    srv = serve(store, host, port, rt.plc_jobs, rt.transfers, server.get("source_url"), rt.settings, defaults)
     logging.info("dashboard on http://%s:%d  (%d machines)", "localhost" if host == "0.0.0.0" else host, port,
                  len(workers))
     try:
@@ -445,7 +596,7 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
-        for w in workers:
+        for w in list(rt.workers.values()):
             w.stop_evt.set()
         srv.shutdown()
 
