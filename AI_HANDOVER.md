@@ -391,9 +391,9 @@ add a test with the observed pattern first.
 
 ## 7. Version control
 
-The project is published under the **GNU AGPL-3.0-or-later** with an additional permission for the FANUC
-FOCAS2 library (`NOTICE.md`). The dashboard footer links to the source (`/api/about`, `SOURCE_URL` in
-`machine_monitor/__init__.py`, override with `[server] source_url`) - AGPL section 13. `.gitignore` keeps out
+The project is published under the **Apache License 2.0** (`LICENSE`; until 2026-11-14 it was AGPL-3.0-or-later).
+`NOTICE.md` covers the FANUC FOCAS2 library, third-party packages and trademarks. The dashboard footer links to
+the source (`/api/about`, `SOURCE_URL` in `machine_monitor/__init__.py`, override with `[server] source_url`). `.gitignore` keeps out
 everything site-specific or licensed: `config.toml`, `pi/pi_settings.local.bat`, `data/` (database, copied PLC
 files - those belong to the machine builder), `backups/`, `certs/`, `*.pcapng` recordings, `FOCAS/*` (only
 `FOCAS/README.txt` is tracked). `.gitattributes` forces LF for `*.sh`, `*.service`, `*.timer`, `*.py` (they run

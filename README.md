@@ -167,20 +167,13 @@ API (JSON, for Excel/Power BI): `/api/search?q=<text>` (all history), `/api/over
 
 Copyright (C) 2026 Laurens Wijnschenk
 
-This program is free software: you can redistribute it and/or modify it under the terms of the
-**GNU Affero General Public License** as published by the Free Software Foundation, either version 3 of the
-License, or (at your option) any later version (see `LICENSE`). It is distributed in the hope that it will be
-useful, but **WITHOUT ANY WARRANTY**; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
-PARTICULAR PURPOSE.
+Licensed under the **Apache License, Version 2.0** (see `LICENSE`). You may use, change and share it, also
+commercially and in closed products, as long as you keep the copyright and license notices and state which
+files you changed. It is distributed on an "AS IS" BASIS, **WITHOUT WARRANTIES** OR CONDITIONS OF ANY KIND.
 
-In short: you may use it, change it and share it, also commercially. If you share a changed version - or let
-people use a changed version over a network, e.g. the dashboard on your shop network - you must offer them the
-source code of your version under the same license. The dashboard footer links to the source; set
-`[server] source_url` in `config.toml` if you run a changed version.
-
-An additional permission allows use together with FANUC's FOCAS2 library, which is not free software. Only
-FANUC's Linux library for the Raspberry Pi is included (unchanged, FANUC allows it to be redistributed); the
-Windows libraries are not - see `NOTICE.md`, which also lists the third-party packages and trademarks.
+FANUC's FOCAS2 library is not covered by this license. Only FANUC's Linux library for the Raspberry Pi is
+included (unchanged, FANUC allows it to be redistributed); the Windows libraries are not - see `NOTICE.md`,
+which also lists the third-party packages and trademarks.
 
 This project is not affiliated with, endorsed by or supported by FANUC, Siemens, HEIDENHAIN, DN Solutions or
 any other machine or control builder. Their names are only used to say which controls it works with.

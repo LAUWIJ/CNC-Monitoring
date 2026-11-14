@@ -1,24 +1,16 @@
 # Notices
 
-## License and additional permission
+## License
 
 Copyright (C) 2026 Laurens Wijnschenk
 
-Licensed under the GNU Affero General Public License, version 3 or (at your option) any later version.
-See `LICENSE`.
-
-**Additional permission under GNU AGPL version 3 section 7**
-
-If you modify this Program, or any covered work, by linking or combining it with the FANUC FOCAS2 library
-(or a modified version of that library), containing parts covered by the terms of FANUC's license for that
-library, the licensors of this Program grant you additional permission to convey the resulting work.
-Corresponding Source for a non-source form of such a combination shall not include the source code for the
-parts of the FANUC FOCAS2 library used as well as that of the covered work.
+Licensed under the Apache License, Version 2.0. See `LICENSE`. Versions published before 2026-11-14 were
+licensed under the GNU AGPL-3.0-or-later.
 
 ## FANUC FOCAS2
 
 The FOCAS2 library (FANUC part number A02B-0207-K737) is proprietary software of FANUC CORPORATION. It is
-**not** covered by this project's license (AGPL) and is only loaded at run time from the `FOCAS/` folder.
+**not** covered by this project's license (Apache-2.0) and is only loaded at run time from the `FOCAS/` folder.
 
 - **Windows DLLs: not included.** Each user obtains them from FANUC or their machine builder under FANUC's
   license agreement.

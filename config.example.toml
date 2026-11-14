@@ -4,7 +4,7 @@
 host = "0.0.0.0"          # reachable from other PCs on the network
 port = 8080
 database = "data/monitor.db"
-# source_url = "https://..."   # only if you run a CHANGED version: where its source is (AGPL, dashboard footer)
+# source_url = "https://..."   # optional: link in the dashboard footer to the source of your own version
 
 [defaults]
 poll_interval_s  = 1.0    # how often each control is read

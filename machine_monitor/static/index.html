@@ -1289,7 +1289,7 @@ document.addEventListener("click", (e) => {
 });
 $("#allBack").onclick = () => selectMachine("");
 $("#home").onclick = (e) => { e.preventDefault(); selectMachine(""); };
-// version, license and where the source is (AGPL: users of the dashboard are offered the source)
+// version, license and a link to the source
 fetch("api/about").then((r) => r.json()).then((a) => {
   $("#about").innerHTML = `Machine Monitoring ${esc(a.version)} · free software under ${esc(a.license)} · ` +
     `<a href="${esc(a.source_url)}" target="_blank" rel="noopener">source code</a>`;
