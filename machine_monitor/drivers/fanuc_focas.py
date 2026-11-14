@@ -97,7 +97,9 @@ def resolve_library(path):
     if sys.platform == "win32":
         if path:
             return path
-        return "Fwlib64.dll" if sys.maxsize > 2**32 else "Fwlib32.dll"
+        name = "Fwlib64.dll" if sys.maxsize > 2**32 else "Fwlib32.dll"
+        own = os.path.join(PROJECT_DIR, "FOCAS", name)     # the project's FOCAS folder first
+        return own if os.path.exists(own) else name
     if path and not path.lower().endswith(".dll") and ":\\" not in path and os.path.exists(path):
         return path
     import glob

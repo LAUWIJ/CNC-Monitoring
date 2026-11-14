@@ -66,9 +66,11 @@ add a test with the observed pattern first.
 
 | path | role |
 |---|---|
-| `run.py` | entry point: `python run.py`, `--demo`, `--probe <id>`, `--probe-files <id>` (read-only list of the control's program folders), `--fetch-plc <id>`, `--merge-split-cycles` (history repair: merge counter fragments + mark partial cycles), `--db-stats`, `--set-admin-password`. `Runtime` restarts only the machine whose settings changed |
+| `run.py` | entry point: `python run.py`, `--demo`, `--probe <id>`, `--probe-files <id>` (read-only list of the control's program folders), `--fetch-plc <id>`, `--merge-split-cycles` (history repair: merge counter fragments + mark partial cycles), `--db-stats`, `--set-admin-password`, `--doctor [--json] [--no-connect]`, `--add-machine ID --control .. --host ..`. `Runtime` restarts only the machine whose settings changed |
 | `machine_monitor/settings.py` | Settings page backend: editable fields per control (`FIELDS`), validation, save/delete, connection test with unsaved values, wait-rule names <-> regex (`9021` <-> `^O?9021$`) |
 | `machine_monitor/config_edit.py` | line-level edits of `[[machine]]` blocks in config.toml (comments kept); every edit re-parsed and checked that nothing else changed |
+| `machine_monitor/doctor.py` | `--doctor`: read-only install check (Python, packages per configured control, config, FOCAS library *loaded* not connected, data folder, port 8080, admin password, TCP connect per machine); exit code 0 = no FAIL |
+| `AGENTS.md`, `install.bat`, `doctor.bat` | for AI agents / new installs: agent instructions + never-do list; Windows installer (Python via winget, `.venv`, packages, `--doctor`, Startup-folder autostart; `--yes` = no questions, no pause); `start.bat`/`probe.bat` use `.venv` when present |
 | `machine_monitor/admin.py` | admin password (PBKDF2 hash in `data/admin.json`), login tokens, `Attempts`: 5 wrong tries per IP in 5 min -> that IP waits (also used for the transfer PIN) |
 | `machine_monitor/transfer.py` | program transfer (see 5b): one `FileSession` per control (`FanucFiles`, `HeidenhainFiles`, `SiemensFiles`, `DemoFiles`), `TransferService` with all safety rules, background jobs, history in table `transfers` |
 | `machine_monitor/model.py` | `Sample`, `ExecState`, `Mode`, `MachineState`, `display_name()` |

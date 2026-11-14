@@ -1,4 +1,6 @@
 @echo off
 cd /d "%~dp0"
-python run.py %*
+set PY=python
+if exist ".venv\Scripts\python.exe" set PY=".venv\Scripts\python.exe"
+%PY% run.py %*
 pause

@@ -5,7 +5,7 @@ FANUC FOCAS2 library files.
 
 - Windows: NOT included (licensed by FANUC). FANUC part number of the FOCAS2 library: A02B-0207-K737,
   order from FANUC or your machine builder. With 64-bit Python put Fwlib64.dll + ALL fwlib*64.dll files
-  (fwlibe64.dll, fwlib30i64.dll, fwlib0iD64.dll, ...) here and set fwlib_path in config.toml to
-  ...\FOCAS\Fwlib64.dll
+  (fwlibe64.dll, fwlib30i64.dll, fwlib0iD64.dll, ...) here. They are found automatically; fwlib_path in
+  config.toml is only needed for a DLL somewhere else.
 
 See AI_HANDOVER.md, section 4 (FANUC).

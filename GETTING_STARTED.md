@@ -4,27 +4,29 @@ This repository contains the complete machine monitoring system. Everything that
 site - machines, IP addresses, passwords, the database, the FANUC libraries - is **not** in the repository.
 You create your own copy of those, and they stay on your own PC.
 
-Working with an AI assistant? Give it **AI_HANDOVER.md** first.
+Working with an AI assistant? Point it to **AGENTS.md** (install, checks, safety rules); for code changes
+also **AI_HANDOVER.md**.
 
 ## 1. Get the code
 
 1. Install **GitHub Desktop** (https://desktop.github.com) and sign in.
 2. *File > Clone repository* -> choose this repository and a local folder, e.g. `C:\Machine Monitoring`.
 
-## 2. Install Python and try the demo
+## 2. Install and try the demo
 
-1. Install Python 3.11 or newer from https://www.python.org - tick **"Add python.exe to PATH"**.
-2. Open a command window in the project folder (type `cmd` in the Explorer address bar) and run:
-   ```
-   pip install -r requirements.txt
-   python run.py --demo
-   ```
-3. Open http://localhost:8080 - four simulated machines with two days of history. Close the window to stop.
+1. Double-click **`install.bat`** in the project folder. It installs Python if it is missing (asks first),
+   sets up the monitor's own Python environment (`.venv`) with the packages it needs, checks the
+   installation and can make the monitor start when you log on to Windows. Running it again is safe.
+2. Try it without machines: `start.bat --demo`, then open http://localhost:8080 - four simulated machines with
+   two days of history. Close the window to stop.
+3. Something wrong? **`doctor.bat`** checks the installation and whether your machines answer, and says what to
+   fix (read-only).
 
 ## 3. Your own machines
 
 1. Add your machines. Either in the dashboard: start the monitor (step 4), click **⚙ Settings** (top right),
-   choose an admin password and use **+ Add machine** - with a *Test connection* button. Or by hand: copy
+   choose an admin password and use **+ Add machine** - with a *Test connection* button. Or on the command
+   line: `python run.py --add-machine m1 --control fanuc --host 192.168.1.21 --name "Puma"`. Or by hand: copy
    `config.example.toml` to **`config.toml`** and fill in one `[[machine]]` block per machine.
    - `id`: short and permanent (it keys the history), `name`: free text, can change any time.
    - `enabled = false` (or untick *Monitor this machine*) skips a machine for now.

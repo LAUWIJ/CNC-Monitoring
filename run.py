@@ -303,6 +303,16 @@ def main():
                          "with cnc_rdmcdfinfo. Asks for confirmation; not used by the monitor or the dashboard.")
     ap.add_argument("--db-stats", action="store_true",
                     help="read-only: size of the database, rows and bytes per table, how much it grows per day")
+    ap.add_argument("--doctor", action="store_true",
+                    help="read-only check of this installation (Python, packages, config, FANUC library, port, "
+                         "machines reachable). Exit code 0 = no problems")
+    ap.add_argument("--json", action="store_true", help="with --doctor: print the result as JSON")
+    ap.add_argument("--no-connect", action="store_true", help="with --doctor: don't try to reach the machines")
+    ap.add_argument("--add-machine", metavar="ID", help="add a machine to config.toml (with --control and --host)")
+    ap.add_argument("--control", choices=["fanuc", "siemens", "heidenhain", "mtconnect"], help="with --add-machine")
+    ap.add_argument("--host", help="with --add-machine: IP address (MTConnect: also a full URL)")
+    ap.add_argument("--port", type=int, help="with --add-machine: only if not the control's usual port")
+    ap.add_argument("--name", help="with --add-machine: name shown on the dashboard (default: the ID)")
     ap.add_argument("--set-admin-password", action="store_true",
                     help="set a new password for the dashboard's Settings page (also when it was forgotten)")
     ap.add_argument("--merge-split-cycles", action="store_true",
@@ -323,6 +333,30 @@ def main():
     # protocol libraries are very chatty - only show their real problems
     for noisy in ("asyncua", "LSV2 Client", "pyLSV2"):
         logging.getLogger(noisy).setLevel(logging.ERROR)
+    if args.doctor:
+        from machine_monitor import doctor
+        logging.getLogger().handlers = [fh]                 # keep the output clean (and valid JSON)
+        sys.exit(doctor.main(HERE, args.config, args.json, not args.no_connect))
+
+    if args.add_machine:
+        if not (args.control and args.host):
+            sys.exit("--add-machine needs --control and --host, e.g.: "
+                     "python run.py --add-machine m14 --control fanuc --host 192.168.1.30")
+        if not os.path.exists(args.config):
+            with open(args.config, "w", encoding="utf-8") as f:
+                f.write(NEW_CONFIG)
+        from machine_monitor.settings import SettingsService
+        logging.getLogger().handlers = [fh]
+        vals = {"name": args.name or args.add_machine, "host": args.host, "port": args.port or ""}
+        try:
+            SettingsService(args.config, os.path.join(HERE, "data"), None).save(
+                {"id": args.add_machine, "new": True, "control": args.control, "values": vals})
+        except ValueError as e:
+            sys.exit(str(e))
+        print(f"added {args.add_machine} to {args.config}. Test it: python run.py --probe {args.add_machine}. "
+              "A running monitor picks it up after a restart (machines added in the dashboard start at once).")
+        return
+
     if args.set_admin_password:
         from machine_monitor.admin import set_password
         if sys.stdin.isatty():

@@ -32,12 +32,19 @@ Open http://localhost:8080. Four simulated machines (Fanuc, Siemens, Heidenhain 
 
 ## Real machines
 
-1. Python **3.11 or newer** (`tomllib`). On a 64-bit Python, use `Fwlib64.dll` for Fanuc.
-2. `pip install -r requirements.txt`
-3. `python run.py` (or double-click `start.bat`). The first start creates an empty `config.toml`.
-4. Add machines in the dashboard (**⚙ Settings**, see below) or copy `config.example.toml` to `config.toml` and
-   fill in the IP addresses.
-5. To run permanently: Windows Task Scheduler "At startup" running `start.bat`, or NSSM as a service.
+1. **Windows: double-click `install.bat`** (or `install.bat --yes` from a script / AI agent - no questions).
+   It installs Python 3.11+ if missing (winget), creates `.venv` with the packages, runs `--doctor`, and can
+   add a start at logon (`--autostart`; remove with `--remove-autostart`). Other systems: Python **3.11+**,
+   `python -m venv .venv`, `.venv/bin/pip install -r requirements.txt`.
+2. `start.bat` (or `python run.py`). The first start creates an empty `config.toml`.
+3. Add machines in the dashboard (**⚙ Settings**, see below), with
+   `python run.py --add-machine m1 --control fanuc --host 192.168.1.21`, or by copying `config.example.toml`
+   to `config.toml`. FANUC on Windows: FANUC's FOCAS2 DLLs in `FOCAS\` (found there automatically).
+4. **Check**: `doctor.bat` / `python run.py --doctor` (`--json` for scripts; exit code 0 = no problems):
+   Python, packages, config, FANUC library, data folder, port, admin password and whether every machine
+   answers on its port. Read-only.
+
+AI agents: see **`AGENTS.md`** (install, checks, and the safety rules for real machines).
 
 ### Raspberry Pi (permanent installation)
 
