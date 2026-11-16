@@ -685,10 +685,12 @@ class SiemensOpcUaDriver(Driver):
         self._alarm_tried = True
         from asyncua import ua
         h = _AlarmHandler()
+        src = self._alarm_source()
         sub = self.client.create_subscription(1000, h)
         try:
-            sub.subscribe_events(self.client.get_node(ua.ObjectIds.Server),
-                                 self.client.get_node(ua.ObjectIds.AlarmConditionType))
+            # the server's own alarm type (SINUMERIK: CncAlarmType): with the standard AlarmConditionType the
+            # NHP5000 server sends the events but leaves ActiveState/Retain/Message empty
+            sub.subscribe_events(src, self._own_alarm_type() or self.client.get_node(ua.ObjectIds.AlarmConditionType))
         except Exception:
             try:
                 sub.delete()
@@ -707,6 +709,154 @@ class SiemensOpcUaDriver(Driver):
             except Exception:
                 pass                           # no refresh: alarms already active now show up when they change
 
+    def _own_alarm_type(self):
+        """The server-specific alarm event type (namespace != 0, name containing 'Alarm'), e.g. SINUMERIK's
+        CncAlarmType, found below AlarmConditionType (then below BaseEventType). None if there is none."""
+        from asyncua import ua
+        c = self.client
+        for root, limit in ((ua.ObjectIds.AlarmConditionType, 60), (ua.ObjectIds.BaseEventType, 300)):
+            try:
+                stack, browsed = [(c.get_node(root), 0)], 0
+                while stack and browsed < limit:
+                    node, depth = stack.pop()
+                    browsed += 1
+                    for ch in node.get_children(refs=ua.ObjectIds.HasSubtype):
+                        if ch.nodeid.NamespaceIndex != 0 and "alarm" in _bname(ch).lower():
+                            return ch
+                        if depth < 6:
+                            stack.append((ch, depth + 1))
+            except Exception:
+                continue
+        return None
+
+    def _alarm_source(self):
+        """Where the alarm events come from. Standard OPC UA servers: the Server object. SINUMERIK servers that
+        give BadAttributeIdInvalid there send their CNC alarms from the 'Sinumerik' object instead:
+        alarm_source = "sinumerik" (check first with run.py --probe-alarms <id>)."""
+        from asyncua import ua
+        if str(self.cfg.get("alarm_source", "server")).lower() == "sinumerik":
+            n = _child(self.client.nodes.objects, "Sinumerik")
+            if n is None:
+                raise DriverError("alarm_source = sinumerik, but there is no Objects/Sinumerik on this server")
+            return n
+        return self.client.get_node(ua.ObjectIds.Server)
+
+    def probe_alarms(self, listen_s: float = 0.0) -> list:
+        """Diagnostics for alarms (run.py --probe-alarms). Without listen_s: read-only - server version and
+        which objects say they send events. With listen_s: subscribe to the events of those objects for that
+        long, ask for the active alarms (ConditionRefresh) and print every event as it arrives."""
+        from asyncua import ua
+        out = []
+        self.connect()
+        c = self.client
+        try:
+            for nm, oid in (("product", ua.ObjectIds.Server_ServerStatus_BuildInfo_ProductName),
+                            ("version", ua.ObjectIds.Server_ServerStatus_BuildInfo_SoftwareVersion),
+                            ("build", ua.ObjectIds.Server_ServerStatus_BuildInfo_BuildNumber)):
+                try:
+                    out.append(f"server {nm}: {c.get_node(oid).read_value()}")
+                except Exception as e:
+                    out.append(f"server {nm}: - ({e})")
+            cands = [("Server", c.get_node(ua.ObjectIds.Server))]
+            sinu = _child(c.nodes.objects, "Sinumerik")
+            if sinu is not None:
+                cands.append(("Objects/Sinumerik", sinu))
+            try:
+                out.append("objects: " + ", ".join(_bname(x) for x in c.nodes.objects.get_children()))
+            except Exception as e:
+                out.append(f"objects: cannot browse ({e})")
+            sources = []
+            for nm, n in cands:
+                try:
+                    v = n.read_attribute(ua.AttributeIds.EventNotifier).Value.Value
+                    out.append(f"{nm}: EventNotifier = {v} ({'sends events' if int(v or 0) & 1 else 'no events'})")
+                    if int(v or 0) & 1:
+                        sources.append((nm, n))
+                except Exception as e:
+                    out.append(f"{nm}: EventNotifier not readable ({e})")
+            if not listen_s:
+                out.append("read-only check done. To see real alarm events add --listen 60 (subscribes for 60 s).")
+                return out
+            if not sources:
+                out.append("no object says it sends events - nothing to listen to")
+                return out
+            # the server's own alarm event types (SINUMERIK: CncAlarmType ...) - their fields are what it fills
+            own = []
+            try:
+                stack = [(c.get_node(ua.ObjectIds.BaseEventType), 0)]
+                browsed = 0
+                while stack and len(own) < 20 and browsed < 300:
+                    node, depth = stack.pop()
+                    browsed += 1
+                    for ch in node.get_children(refs=ua.ObjectIds.HasSubtype):
+                        nm_ = _bname(ch)
+                        if ch.nodeid.NamespaceIndex != 0:
+                            own.append((nm_, ch))
+                        if depth < 6:
+                            stack.append((ch, depth + 1))
+                out.append("event types of this server: " + (", ".join(n for n, _ in own) or "none (only standard)"))
+            except Exception as e:
+                out.append(f"event types: cannot browse ({e})")
+            pick = [x for x in own if "alarm" in x[0].lower()] or own
+            for nm, n in sources:
+                got = []
+
+                class H:
+                    def event_notification(self, ev):
+                        try:
+                            got.append(ev.get_event_props_as_fields_dict())
+                        except Exception:
+                            got.append({"event": str(ev)})
+
+                    def status_change_notification(self, status):
+                        pass
+                sub = c.create_subscription(500, H())
+                try:
+                    tries = [(x[0], x[1]) for x in pick[:1]] + [
+                        ("AlarmConditionType", c.get_node(ua.ObjectIds.AlarmConditionType)),
+                        ("BaseEventType", c.get_node(ua.ObjectIds.BaseEventType))]
+                    for et_name, et in tries:
+                        try:
+                            sub.subscribe_events(n, et)
+                            out.append(f"{nm}: subscribed ({et_name})")
+                            break
+                        except Exception as e:
+                            out.append(f"{nm}: subscribe with {et_name} failed: {e}")
+                    else:
+                        continue
+                    sid = getattr(sub, "subscription_id", None) or getattr(getattr(sub, "aio_obj", None),
+                                                                           "subscription_id", None)
+                    if sid is not None:
+                        try:
+                            c.get_node(ua.ObjectIds.ConditionType).call_method(
+                                ua.NodeId(ua.ObjectIds.ConditionType_ConditionRefresh),
+                                ua.Variant(sid, ua.VariantType.UInt32))
+                            out.append(f"{nm}: asked for the active alarms (ConditionRefresh)")
+                        except Exception as e:
+                            out.append(f"{nm}: ConditionRefresh not accepted ({e})")
+                    t_end = time.time() + listen_s
+                    while time.time() < t_end:
+                        time.sleep(0.5)
+                    out.append(f"{nm}: {len(got)} event(s) in {listen_s:.0f} s")
+                    for i, ev in enumerate(got[:30], 1):
+                        vals = {}
+                        for k, v in ev.items():
+                            v = getattr(v, "Value", v)          # unwrap Variant
+                            v = getattr(v, "Text", v)           # LocalizedText -> text
+                            if v not in (None, "", b"", []):
+                                vals[k] = v
+                        out.append(f"  event {i}:")
+                        for k, v in vals.items():
+                            out.append(f"    {k} = {str(v)[:200]}")
+                finally:
+                    try:
+                        sub.delete()
+                    except Exception:
+                        pass
+        finally:
+            self.close()
+        return out
+
     def read_alarms(self):
         if self.client is None or not self.cfg.get("alarms", True):
             return None
@@ -716,8 +866,18 @@ class SiemensOpcUaDriver(Driver):
             except Exception as e:
                 if not self._alarm_warned:
                     import logging
-                    logging.getLogger("siemens").info("[%s] alarms not available via OPC UA: %s",
-                                                      self.cfg.get("id"), e)
+                    if "BadAttributeIdInvalid" in str(e) or "BadNotSupported" in str(e):
+                        # the Server object has no EventNotifier: this OPC UA server sends no alarm events
+                        # (Alarms & Conditions not available in this version/option) - not a rights problem
+                        logging.getLogger("siemens").info(
+                            "[%s] no alarm events from the OPC UA Server object - alarms are not shown for now "
+                            "(status, cycles and parts are not affected). SINUMERIK may send them from "
+                            "Objects/Sinumerik instead: check with probe_alarms_pi.bat %s, then set Alarm source "
+                            "= Sinumerik in Settings (alarm_source = \"sinumerik\")",
+                            self.cfg.get("id"), self.cfg.get("id"))
+                    else:
+                        logging.getLogger("siemens").info("[%s] alarms not available via OPC UA: %s",
+                                                          self.cfg.get("id"), e)
                     self._alarm_warned = True
                 return None
         if self._alarms is None:

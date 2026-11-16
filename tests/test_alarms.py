@@ -185,6 +185,24 @@ class HeidenhainPlcMessageTests(unittest.TestCase):
 
 
 class SiemensAlarmTests(unittest.TestCase):
+    def test_nhp5000_cncalarmtype_events(self):
+        """As received from the NHP5000 (AccessMyMachine/OPC UA 02.02.00.02, CncAlarmType on Objects/Sinumerik):
+        the ActiveState text stays 'Active' when the alarm goes - only ActiveState/Id and Retain change."""
+        h = _AlarmHandler()
+        lt = lambda t: types.SimpleNamespace(Text=t)  # noqa: E731
+
+        def ev(on):
+            return types.SimpleNamespace(NodeId=700197, AlarmIdentifier=700145, ConditionName=lt("SystemCondition"),
+                                         Message=lt("700145 | [C, Door] Operator door open state,  Key switch and MPG enable on"),
+                                         SourceName=lt("PLC"), ActiveState=lt("Active"), Retain=on,
+                                         **{"ActiveState/Id": on})
+        h.event_notification(types.SimpleNamespace(SourceName=lt("Server"), Severity=0))   # RefreshStart
+        h.event_notification(ev(True))
+        self.assertEqual(list(h.active.values()),
+                         [{"code": "700145", "text": "[C, Door] Operator door open state,  Key switch and MPG enable on"}])
+        h.event_notification(ev(False))
+        self.assertEqual(h.active, {})
+
     def test_condition_active_then_cleared(self):
         h = _AlarmHandler()
         lt = lambda t: types.SimpleNamespace(Text=t)  # noqa: E731

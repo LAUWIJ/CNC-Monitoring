@@ -289,6 +289,10 @@ def main():
                     help="program transfer check, READ-ONLY: list the drives/folders the control offers and exit")
     ap.add_argument("--opcua-rights", metavar="MACHINE_ID",
                     help="SINUMERIK: show the OPC UA user's access rights and exit")
+    ap.add_argument("--probe-alarms", metavar="MACHINE_ID",
+                    help="SINUMERIK: which objects send alarm events (read-only); with --listen N also subscribe "
+                         "for N seconds and print the alarm events")
+    ap.add_argument("--listen", type=float, default=0.0, help="with --probe-alarms: seconds to listen")
     ap.add_argument("--opcua-grant", nargs=2, metavar=("MACHINE_ID", "RIGHT"),
                     help="SINUMERIK: give the configured OPC UA user a right, e.g. FsWrite (the user must be the "
                          "OPC UA admin or allowed to manage rights)")
@@ -468,6 +472,17 @@ def main():
         return fanuc_card_fetch(cfg, cfg_path, args.fanuc_card_fetch)
     if args.fanuc_card_test:
         return fanuc_card_test(cfg, cfg_path, args.fanuc_card_test)
+
+    if args.probe_alarms:
+        from machine_monitor.drivers.siemens_opcua import SiemensOpcUaDriver
+        m = next((m for m in cfg.get("machine", []) if m["id"] == args.probe_alarms), None)
+        if not m or m.get("control") != "siemens":
+            sys.exit(f"'{args.probe_alarms}' is not a SINUMERIK machine in {cfg_path}")
+        try:
+            print("\n".join(SiemensOpcUaDriver({**cfg.get("defaults", {}), **m}).probe_alarms(args.listen)))
+        except Exception as e:
+            sys.exit(f"failed: {e}")
+        return
 
     if args.opcua_rights or args.opcua_grant:
         from machine_monitor.transfer import SiemensFiles

@@ -62,6 +62,7 @@ backup_max_mb = 200   # all machines together; the oldest go first
 id = "m1"
 name = "Machine 1 (Sinumerik)"
 control = "siemens"
+# alarm_source = "sinumerik"   # alarms come from Objects/Sinumerik instead of the Server object (check: probe_alarms_pi.bat)
 host = "192.168.1.11"
 port = 4840
 username = "monitor"        # OPC UA user configured on the control

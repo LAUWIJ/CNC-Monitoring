@@ -378,6 +378,23 @@ add a test with the observed pattern first.
   oldest detail (state periods first, cycles later - medians need them), then remove detail of days that are
   already in the daily summary (never automatic), VACUUM while there is still room. Count backups too.
 
+## 5d1. SINUMERIK alarms: Server object vs Sinumerik object (Nov 2026)
+
+- NHP5000 (m9): subscribing to alarm events on the standard Server object fails with BadAttributeIdInvalid
+  (no EventNotifier there). The user knows the control does have alarms; SINUMERIK servers send their CNC
+  alarm events (CncAlarmType) from the `Objects/Sinumerik` object. `alarm_source = "sinumerik"` (Settings:
+  Alarm source) subscribes there instead. Not automatic on purpose: one user reported an older SINUMERIK OPC
+  UA server shutting down when a client monitored that object for events - check first with
+  `probe_alarms_pi.bat <id>` (step 1 read-only: server version + EventNotifier of both objects; step 2 after
+  confirmation: subscribe 60 s, ConditionRefresh, print events).
+- **Verified 2026-11-16 on m9** (AccessMyMachine/OPC UA 02.02.00.02.003): Server object -> BadAttributeIdInvalid
+  for every event type; Objects/Sinumerik works, no server problems. The server's own type is `CncAlarmType`
+  (ns=2;i=1002). Subscribed with AlarmConditionType the events arrive but ActiveState/Retain/Message are
+  EMPTY - so the driver subscribes with the server's own alarm type (`_own_alarm_type`). Fields: Message
+  "700145 | [C, Door] ...", ActiveState/Id True->False and Retain True->False when it clears (the ActiveState
+  TEXT stays "Active"!), NodeId = condition instance (same for come/go, the key), AlarmIdentifier = number,
+  SourceName PLC, Severity 500. ConditionRefresh gives RefreshStart/End (2787/2788) from the Server.
+
 ## 5d2. Warm-up programs (Nov 2026)
 
 - `warmup_programs = [regex, ...]` per machine (Settings: "Warm-up programs", plain names -> patterns like the
