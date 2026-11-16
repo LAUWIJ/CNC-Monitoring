@@ -270,6 +270,17 @@ add a test with the observed pattern first.
   Catalogue entries (`/Tool/Catalogue/...[u1,i]`, i = 1..numTools) are POSITIONS, not tool numbers - map them with
   `toolNo[u1,i]`; `/Tool/Data/toolMon[u1,T]` / `toolState[u1,T]` are per TOOL NUMBER. On the DNM6700 only ~3 of
   237 tools have monitoring on - tool life is barely used there.
+  **Tool life (built 2026-11-16, NHP5000 840D sl, 36 of 163 tools on piece count):** the monitoring table is
+  `/Tool/Supervision/data[u1, c<T>, k]` - COLUMN = TOOL NUMBER, row k = parameter of edge D1 (the other order,
+  `c<k>,<T>`, gives Bad). k: 1 prewarning time, 2 remaining time, 3 prewarning count, 4 remaining count,
+  5 target time, 6 target count (T17 CENTERBOOR-10: k4 = 294, k6 = 650). `toolMon` ($TC_TP9) 1 = time,
+  2 = count (a value, not bits); `toolState` bit 2 = locked. `/Tool/Data/data`, `duploNo`, `numSupervParams` do
+  not exist there. Driver `read_tool_life`: one-tool groups -T like HEIDENHAIN (count -> count_type "cycles",
+  life = k6, count = k6 - k4; time -> "minutes" with time1 = k5). Read at connect (full scan of toolNo, at most
+  every 10 min), after every part for its tools, again 15 s later (`tool_life_reread_s`: the count is lowered at
+  program end for every tool of the program) and every 60 s while waiting for a tool change
+  (`tool_life_cheap`). A used-up tool cannot be called, so the machine never stops halfway a part for it. No
+  sister tools on the NHP5000 yet (duplo numbers not grouped - would need grouping by toolIdent).
 - **HEIDENHAIN (DVF BMO, TNC 640, pyLSV2 1.8)**: `spindle_tool_status()` and `read_data_path` give nothing, the API
   symbols have no tool number. **The PLC has it**: HEIDENHAIN's example PLC keeps the tool in the spindle in the
   double word `<Global>\SPINDLE[0].DG_TOOL_IN_SPINDLE` - D16356 or D17032 depending on the PLC version (address

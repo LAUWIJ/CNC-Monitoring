@@ -857,6 +857,98 @@ class SiemensOpcUaDriver(Driver):
             self.close()
         return out
 
+    # ------------------------------------------------------------- tool life (840D tool monitoring)
+    # Verified on the NHP5000 (840D sl, 2026-11-16): /Tool/Supervision/data[u1, c<T>, k] - column = TOOL NUMBER,
+    # row = parameter (edge D1): 1 prewarning time, 2 remaining time, 3 prewarning count, 4 remaining count,
+    # 5 target time, 6 target count (e.g. T17 CENTERBOOR-10: 294 of 650 left). /Tool/Data/toolMon[u1,T]
+    # ($TC_TP9): 1 = time, 2 = piece count. /Tool/Data/toolState[u1,T] ($TC_TP8) bit 2 = tool locked.
+    # The count is lowered at the end of the program for every tool in it; a used-up tool cannot be called.
+    tool_life_after_every_cycle = True      # read at connect and after every part (tools of that part)
+    tool_life_reread_s = 15                 # and once more shortly after: the count may drop just after the end
+    tool_life_cheap = True                  # light reads: may be read again while waiting for a tool change
+    TOOL_SCAN_S = 600                       # full scan of all tool numbers at most every 10 minutes
+
+    def _read_paths(self, paths: list) -> list:
+        vals = []
+        for i in range(0, len(paths), 50):
+            nodes = [self.client.get_node(self._nid(x)) for x in paths[i:i + 50]]
+            try:
+                vals += self.client.read_values(nodes)
+            except Exception:
+                for nd in nodes:
+                    try:
+                        vals.append(nd.read_value())
+                    except Exception:
+                        vals.append(None)
+        return vals
+
+    def _all_tool_numbers(self) -> list:
+        n = _num(self._read_paths(["/Tool/Catalogue/numTools"])[0]) or 0
+        tnos = self._read_paths([f"/Tool/Catalogue/toolNo[u1,{i}]" for i in range(1, int(n) + 1)])
+        return sorted({int(t) for t in tnos if _num(t)})
+
+    def tools_without_life(self) -> set:
+        """Tool numbers that the last read found without monitoring (switched off, or target 0)."""
+        return set(getattr(self, "_no_life", set()))
+
+    def read_tool_life(self, groups=None) -> list:
+        """Life of every monitored tool (piece count or time) as one-tool 'groups' numbered -T, like the
+        HEIDENHAIN tools. groups: tool numbers to read (the tools of the part just made), None = all."""
+        self._no_life = set()
+        if self.client is None or not self.cfg.get("tool_life", True):
+            return []
+        now = time.time()
+        if groups is None:
+            if now - getattr(self, "_tool_scan_ts", 0) >= self.TOOL_SCAN_S or not getattr(self, "_monitored", None):
+                tools = self._all_tool_numbers()
+                self._tool_scan_ts = now
+            else:
+                tools = sorted(self._monitored)            # re-read while waiting: the known monitored tools
+        else:
+            tools = sorted({int(g) for g in groups if str(g).lstrip("-").isdigit() and int(g) > 0})
+        if not tools:
+            return []
+        mons = self._read_paths([f"/Tool/Data/toolMon[u1,{t}]" for t in tools])
+        on = [(t, int(_num(m))) for t, m in zip(tools, mons) if _num(m) in (1, 2)]
+        self._no_life = {t for t, m in zip(tools, mons) if m is not None and _num(m) not in (1, 2)}
+        if not on:
+            if groups is None:
+                self._monitored = set()
+            return []
+        paths = []
+        for t, _ in on:
+            paths += [f"/Tool/Supervision/data[u1,c{t},{k}]" for k in (2, 4, 5, 6)] + [f"/Tool/Data/toolState[u1,{t}]"]
+        vals = self._read_paths(paths)
+        out, monitored = [], set()
+        for i, (t, mon) in enumerate(on):
+            def f(v):
+                try:
+                    return float(getattr(v, "value", v)) if v is not None else None
+                except (TypeError, ValueError):
+                    return None
+            left_t, left_n, target_t, target_n, state = (f(v) for v in vals[i * 5:i * 5 + 5])
+            locked = bool(int(state or 0) & 4)
+            if mon == 2 and target_n and target_n > 0 and left_n is not None:
+                left = max(0.0, float(left_n))
+                out.append({"grp": -t, "count_type": "cycles", "life": int(target_n),
+                            "count": int(round(target_n - left)), "ntool": 1, "nfree": 0 if (left <= 0 or locked) else 1,
+                            "use_tool": 1, "tools": [{"num": t, "status": 2 if (left <= 0 or locked) else 1}]})
+            elif mon == 1 and target_t and target_t > 0 and left_t is not None:
+                used = max(0.0, float(target_t) - float(left_t))
+                out.append({"grp": -t, "count_type": "minutes", "life": round(float(target_t), 1),
+                            "count": round(used, 1), "ntool": 1, "nfree": 0 if (left_t <= 0 or locked) else 1,
+                            "use_tool": 1, "tools": [{"num": t, "status": 2 if (left_t <= 0 or locked) else 1,
+                                                      "time1": round(float(target_t), 1), "time2": 0.0}]})
+            else:
+                self._no_life.add(t)
+                continue
+            monitored.add(t)
+        if groups is None:
+            self._monitored = monitored
+        else:
+            self._monitored = (getattr(self, "_monitored", set()) - set(tools)) | monitored
+        return out
+
     def read_alarms(self):
         if self.client is None or not self.cfg.get("alarms", True):
             return None

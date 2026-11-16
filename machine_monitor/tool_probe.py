@@ -367,26 +367,38 @@ def _siemens(m, out):
             t = int(cl.get_node(drv._nid("/Channel/State/actTNumber")).read_value())
         except Exception:
             t = 0
-        if t > 0:
-            out(f"\ntool monitoring of the tool in the spindle (T{t}), /Tool/Supervision/data[u1,c<k>,{t}]:")
-            vals = []
-            for k in range(1, 14):
-                try:
-                    vals.append(f"c{k}={cl.get_node(drv._nid(f'/Tool/Supervision/data[u1,c{k},{t}]')).read_value()!r}")
-                except Exception:
-                    vals.append(f"c{k}=-")
-            out("   " + "  ".join(vals))
-            for p in (f"/Tool/Catalogue/toolIdent[u1,{t}]", f"/Tool/Data/data[u1,c9,{t}]", f"/Tool/Data/data[u1,c8,{t}]",
-                      f"/Tool/Catalogue/toolInMag[u1,{t}]", f"/Tool/Catalogue/toolInPlace[u1,{t}]"):
-                try:
-                    out(f"   {p:<42} = {cl.get_node(drv._nid(p)).read_value()!r}")
-                except Exception as e:
-                    out(f"   {p:<42}   not readable ({str(e).split(':')[0][:50]})")
-        for p in (f"/Tool/Data/toolMon[u1,{t}]", f"/Tool/Data/toolState[u1,{t}]"):
+        def rd(path):
             try:
-                out(f"   {p:<42} = {cl.get_node(drv._nid(p)).read_value()!r}")
+                return cl.get_node(drv._nid(path)).read_value()
             except Exception as e:
-                out(f"   {p:<42}   not readable ({str(e).split(':')[0][:50]})")
+                return f"<{str(e).split(':')[0][:40]}>"
+
+        def names_under(area):
+            try:
+                kids = cl.get_node(f"ns=2;s={area}").get_children()
+                return ", ".join(k.read_browse_name().Name for k in kids[:60])
+            except Exception as e:
+                return f"cannot list ({str(e).split(':')[0][:60]})"
+        out("\nvariables under /Tool/Supervision: " + names_under("/Tool/Supervision"))
+        out("variables under /Tool/Data: " + names_under("/Tool/Data"))
+        out("variables under /Tool/Compensation: " + names_under("/Tool/Compensation"))
+        for p in ("/Tool/Configuration/numSupervParams", "/Tool/Configuration/numCuttEdgeParams",
+                  "/Tool/Configuration/numToolParams", "/Tool/MagazineConfiguration/numSupervParams"):
+            out(f"{p:<45} = {rd(p)!r}")
+
+        def sup_dump(t):
+            out(f"\nT{t}: toolMon={rd(f'/Tool/Data/toolMon[u1,{t}]')!r}  "
+                f"numCuttEdges={rd(f'/Tool/Data/numCuttEdges[u1,{t}]')!r}  "
+                f"duploNumber={rd(f'/Tool/Data/duploNumber[u1,{t}]')!r}  ident={rd(f'/Tool/Data/toolIdent[u1,{t}]')!r}")
+            for label, fmt in (("Supervision/data[u1,c<T>,<k>]", "/Tool/Supervision/data[u1,c{t},{k}]"),
+                               ("Supervision/data[u1,c<k>,<T>]", "/Tool/Supervision/data[u1,c{k},{t}]"),
+                               ("Data/data[u1,c<T>,<k>]       ", "/Tool/Data/data[u1,c{t},{k}]")):
+                vals = [f"{k}={rd(fmt.format(t=t, k=k))!r}" for k in range(1, 17)]
+                ok = [v for v in vals if "<" not in v]
+                out(f"   {label}: " + ("  ".join(ok) if ok else "nothing readable " + vals[0]))
+        t_sp = t
+        if t > 0:
+            sup_dump(t)
         # scan: catalogue position i -> tool number (toolNo) + name (toolIdent); monitoring per TOOL NUMBER
         try:
             n = int(cl.get_node(drv._nid("/Tool/Catalogue/numTools")).read_value())
@@ -423,6 +435,9 @@ def _siemens(m, out):
                         v = batch([f"/Tool/Supervision/data[u1,c{c},{t}]"])[0]
                         sup.append(f"c{c}={v if v is not None else '-'}")
                     out(f"   T{t:<5} {nm:<24} toolMon={mv}   " + " ".join(sup))
+                for t2, _, _ in on[:3]:
+                    if t2 != t_sp:
+                        sup_dump(t2)
         try:
             kids = cl.get_node("ns=2;s=/Tool").get_children()
             out("\nareas under /Tool: " + ", ".join(k.read_browse_name().Name for k in kids[:40]))

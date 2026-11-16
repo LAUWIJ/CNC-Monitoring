@@ -60,6 +60,7 @@ class MachineWorker(threading.Thread):
         self._alarm_err_logged = False
         self._tool_out = False           # tool life of the program used up (checked while standing still)
         self._tool_check = 0.0
+        self._tool_reread = None         # (due ts, tools): second read shortly after a part (SINUMERIK)
 
     # ------------------------------------------------------------- handling
     def _tool_life_out(self) -> bool:
@@ -82,8 +83,9 @@ class MachineWorker(threading.Thread):
             return
         if s.ts >= self._tool_check:
             self._tool_check = s.ts + (60 if self._tool_out else 15)
-            if self._tool_out and not getattr(self.driver, "tool_life_after_every_cycle", False):
-                # FANUC: read the groups again, so a life reset by the operator ends the wait without waiting
+            if self._tool_out and (not getattr(self.driver, "tool_life_after_every_cycle", False)
+                                   or getattr(self.driver, "tool_life_cheap", False)):
+                # FANUC / SINUMERIK: read again, so a life reset by the operator ends the wait without waiting
                 # for the next part (HEIDENHAIN tool table reads stay limited to the agreed moments)
                 self.read_tool_life(None, s.ts)
             self._tool_out = self._tool_life_out()
@@ -93,6 +95,9 @@ class MachineWorker(threading.Thread):
 
     def handle(self, s: Sample, live: bool = True):
         if live:
+            if self._tool_reread and s.ts >= self._tool_reread[0]:
+                tools, self._tool_reread = self._tool_reread[1], None
+                self.read_tool_life(tools, s.ts)
             self.tool_life_wait(s)
         for ev in self.engine.update(s):
             if isinstance(ev, StateChange):
@@ -103,6 +108,9 @@ class MachineWorker(threading.Thread):
                 if getattr(self.driver, "tool_life_after_every_cycle", False):
                     # HEIDENHAIN: life per tool from the tool table, read once at the end of every part
                     self.read_tool_life(set(ev.tool_times or {}), ev.end_ts or s.ts)
+                    delay = getattr(self.driver, "tool_life_reread_s", 0)
+                    if delay and live and ev.tool_times:
+                        self._tool_reread = (s.ts + delay, set(ev.tool_times))
                 elif groups:
                     self.read_tool_life(groups, ev.end_ts or s.ts)
                 if live:

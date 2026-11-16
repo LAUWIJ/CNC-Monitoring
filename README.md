@@ -154,7 +154,10 @@ occasional break does not count). When the machine is not producing it shows how
 
 - **Fanuc**: the tool in the spindle from macro `#4120`. With tool life management (e.g. `T0199` = group 1) the
   monitor reads the groups (life, counter, sister tools) at the end of a part and shows *parts left* for the program.
-- **Siemens**: tool number and identifier (`actTNumber`, `actToolIdent`) with the normal values.
+- **Siemens**: tool number and identifier (`actTNumber`, `actToolIdent`) with the normal values. Tools with
+  **tool monitoring** on (piece count or time) are read at connect, at the end of every part for the tools it used
+  (and once more 15 s later, as the control lowers the count at the end of the program). Piece count: *parts left*
+  = the remaining count; a tool used up or locked on the control counts as 0. Switch off with `tool_life = false`.
 - **Heidenhain**: the monitor asks the control once at connect whether it answers *tool in spindle*:
   - **yes** (e.g. iTNC 530): tool number from that request, name and life (`TIME1`/`TIME2`, `CUR.TIME`) read as
     single tool table fields - once per tool, and at the end of a part for the tools it used;
