@@ -10,7 +10,7 @@
   --bg: #f4f4f2; --surface: #fcfcfb; --border: #e3e2de; --grid: #ecebe7;
   --text: #0b0b0b; --text2: #52514e; --muted: #85847f;
   --running: #0ca30c; --setup: #2a78d6; --paused: #fab219; --idle: #d6d5d0;
-  --alarm: #d03b3b; --waiting: #6250d6; --robot: #d55181; --offline: #9c9b96; --cycle: #3d3c39; --run-bar: #2a78d6; --pause-bar: #eda100;
+  --alarm: #d03b3b; --waiting: #6250d6; --robot: #d55181; --warmup: #0fa5a0; --offline: #9c9b96; --cycle: #3d3c39; --run-bar: #2a78d6; --pause-bar: #eda100;
 }
 @media (prefers-color-scheme: dark) {
   :root:where(:not([data-theme="light"])) {
@@ -450,6 +450,7 @@ tr.sel { background: var(--grid); }
 const STATES = {
   RUNNING: { label: "Running",  c: "var(--running)", icon: "▶" },
   SETUP:   { label: "Setup / MDI", c: "var(--setup)", icon: "✎" },
+  WARMUP:  { label: "Warm-up", c: "var(--warmup)", icon: "♨" },
   PAUSED:  { label: "Paused",   c: "var(--paused)",  icon: "❚❚" },
   WAITING: { label: "Waiting for operator", c: "var(--waiting)", icon: "⧗" },
   WAIT_ROBOT: { label: "Waiting for robot", c: "var(--robot)", icon: "⚙" },
@@ -831,7 +832,7 @@ function xRenderList() {
   $("#xList").innerHTML = X.items.map((e, i) => e.dir
     ? `<div class="xrow" data-i="${i}" title="Open folder"><span>📁</span><span class="nm">${esc(e.name)}</span><span></span><span class="r">${fmtDay(e.mtime)}</span></div>`
     : `<div class="xrow${X.sel.has(e.name) ? " sel" : ""}" data-i="${i}"><input type="checkbox" tabindex="-1" aria-label="Select ${esc(e.name)}"${X.sel.has(e.name) ? " checked" : ""}>
-        <span class="nm" title="${esc(e.name)}${e.comment ? " - " + esc(e.comment) : ""}">${esc(e.name)}${e.in_use === "running" ? '<span class="xbadge run">running</span>' : e.in_use ? '<span class="xbadge sel">selected</span>' : ""}${e.protected ? '<span class="xbadge">protected</span>' : ""}${e.comment ? `<span class="cm">${esc(e.comment)}</span>` : ""}</span>
+        <span class="nm" title="${esc(e.name)}${e.comment ? " - " + esc(e.comment) : ""}">${esc(e.name)}${e.in_use === "running" ? '<span class="xbadge run">running</span>' : e.in_use ? `<span class="xbadge sel"${e.replace_ok ? ' title="selected for program run - may be replaced: the control is in manual mode"' : ""}>selected</span>` : ""}${e.protected ? '<span class="xbadge">protected</span>' : ""}${e.comment ? `<span class="cm">${esc(e.comment)}</span>` : ""}</span>
         <span class="r">${fmtSize(e.size)}</span><span class="r">${fmtDay(e.mtime)}</span></div>`).join("");
 }
 function xSelUi() {
@@ -933,7 +934,7 @@ async function xSendFiles(files) {
     if (f.size > X.info.max_mb * 1048576) { const ui = xJobUi(`↑ ${f.name}`); ui.set(`larger than ${X.info.max_mb} MB`, 1, true); ui.done(15000); continue; }
     let name = f.name;
     const existing = X.items.find((e) => !e.dir && e.name.toUpperCase() === name.toUpperCase());
-    if (existing && (existing.in_use || existing.protected)) {
+    if (existing && ((existing.in_use && !existing.replace_ok) || existing.protected)) {
       const ui = xJobUi(`↑ ${name}`);
       ui.set(existing.in_use ? `${name} is ${existing.in_use} on the control - not replaced` : `${name} is protected - not replaced`, 1, true);
       ui.done(15000); continue;
@@ -1754,7 +1755,8 @@ function showEdit(m) {
   $("#setTitle").textContent = m.isNew ? "Add machine" : `Edit ${m.values.name || m.id}`;
   const fields = SET.data.fields.filter((f) => !f.controls || f.controls.includes(m.control));
   const main = fields.filter((f) => ["name", "host", "port", "enabled", "username", "password", "security"].includes(f.key));
-  const more = fields.filter((f) => !main.includes(f));
+  const warm = fields.filter((f) => f.key === "warmup_programs");
+  const more = fields.filter((f) => !main.includes(f) && !warm.includes(f));
   setBody.innerHTML = `<div class="sgrid">
       <label for="sId">ID</label><div>${m.isNew ? `<input type="text" id="sId" value="${esc(m.id)}"><div class="shelp">Short and fixed - the history is stored under it (e.g. m14)</div>` : `<div class="chk"><b>${esc(m.id)}</b></div>`}</div>
       <label for="sCtl">Control</label><div><select id="sCtl">${SET.data.controls.map((c) => `<option value="${esc(c.id)}" ${c.id === m.control ? "selected" : ""}>${esc(c.label)}</option>`).join("")}
@@ -1766,6 +1768,8 @@ function showEdit(m) {
       handshake macro). <b>End</b>: the part is done when the wait starts (a load program between parts).</p>
     <div id="sWait">${m.wait.map(waitRow).join("")}</div>
     <button type="button" class="btn sec" id="sWaitAdd">+ Add wait rule</button>
+    <div class="ssec">Warm-up</div>
+    <div class="sgrid">${warm.map((f) => fieldHtml(f, m)).join("")}</div>
     <div class="ssec">More</div>
     <div class="sgrid">${more.map((f) => fieldHtml(f, m)).join("")}</div>
     ${m.other && m.other.length ? `<p class="hint">Also set in ${esc(SET.data.config)} (change there): ${m.other.map(esc).join(", ")}</p>` : ""}

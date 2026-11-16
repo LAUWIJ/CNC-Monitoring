@@ -112,6 +112,7 @@ part_count_macro = 3901                # 0 = don't read the part counter
 read_sequence_number = false           # true = also show the N-number being executed on the enlarged card (1 extra call per poll)
 o8_digit_program_numbers = false       # true if the control has 8-digit O-numbers
 # extra_subprogram_patterns = ['^O8\d{3}$']   # machine-specific subs
+# warmup_programs = ['^O?9000$']   # warm-up programs: shown as Warm-up, no part, not machining time
 # Waiting for a robot or the operator (shown separately on the timeline, never counted in
 # the cycle time). program = regex on the program name (main or the sub/macro running now).
 #   action = "end"   the part is done when the wait starts (robot load program between parts)

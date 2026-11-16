@@ -207,6 +207,9 @@ add a test with the observed pattern first.
 - Send flow: name rules -> send allowed (`transfer = "send"`) -> PIN -> protected? -> selected/running? ->
   (job) exists? -> state `exists` -> user confirms -> `/api/transfer/replace` -> fetch old version to
   `data/transfer_backup/<id>/` -> delete -> send. The in-use check runs again right before writing.
+  HEIDENHAIN exception (user, 2026-11-16): the program selected for program run may be replaced while the
+  control is online in a MANUAL mode - the control and TNCremo allow that too. In AUTO, MDI, unknown mode or
+  offline it stays blocked (`TransferService._use`; listing returns `in_use` + `replace_ok`).
 - **INCIDENT 2026-11-11: a file probe crashed a FANUC Series 0i-D (Puma 2600LY, D6G1) with SYS_ALM198
   (software system error, power cycle needed).** The probe called `cnc_rdpdf_alldir` on drive names the control
   had NOT reported (`//CF_TEXT/`, `//HDD/` ...) and `cnc_rdpdf_drive` with `max_num` preset to 16. Both were
@@ -374,6 +377,14 @@ add a test with the observed pattern first.
 - Planned next: storage watch - warn in the dashboard from ~80 % disk use, offer an export per month of the
   oldest detail (state periods first, cycles later - medians need them), then remove detail of days that are
   already in the daily summary (never automatic), VACUUM while there is still room. Count backups too.
+
+## 5d2. Warm-up programs (Nov 2026)
+
+- `warmup_programs = [regex, ...]` per machine (Settings: "Warm-up programs", plain names -> patterns like the
+  wait rules). Running one in AUTO/UNKNOWN (main or current program) gives raw state `WARMUP` instead of
+  RUNNING: no cycle is opened, a part-counter rise in it is ignored (no open cycle), and its time is not cycle
+  run time or tool time. Own colour `--warmup` (#0fa5a0, checked against running/setup for colour-blind and
+  normal vision). MDI/manual stays SETUP; pause/alarm during warm-up stay PAUSED/ALARM.
 
 ## 5e. Settings page (Nov 2026)
 

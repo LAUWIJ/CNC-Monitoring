@@ -31,7 +31,8 @@ class Mode(str, Enum):
 class MachineState(str, Enum):
     """What the dashboard timeline shows."""
     RUNNING = "RUNNING"      # executing a part program in AUTO
-    SETUP = "SETUP"          # executing in MDI/manual (setup, probing, warm-up)
+    SETUP = "SETUP"          # executing in MDI/manual (setup, probing)
+    WARMUP = "WARMUP"        # a warm-up program running in AUTO (machine.warmup_programs): not a part
     PAUSED = "PAUSED"        # inside a cycle but stopped (feed hold, M0, operator)
     WAITING = "WAITING"      # waiting for the operator (e.g. NHP5000 M60 pallet clearance)
     WAIT_ROBOT = "WAIT_ROBOT"  # waiting for the robot (load/unload handshake)

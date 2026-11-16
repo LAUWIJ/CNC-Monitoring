@@ -20,7 +20,8 @@ Per control:
 
 Safety (always, whatever the browser sends):
   * sending is off unless the machine has  transfer = "send"  in config.toml (default: browse + fetch only)
-  * the program that is selected / running on the control is never replaced
+  * the program that is selected / running on the control is never replaced (HEIDENHAIN: the selected
+    program may be, while the control is in a manual mode - the control and TNCremo allow that too)
   * protected programs (default FANUC O8000-O9999 macros) are never replaced
   * a replaced program is first copied to data/transfer_backup/<id>/ on the monitor - limited: the last 3
     versions per program, max 30 days, max 200 MB in total ([transfer] backup_keep / backup_days / backup_max_mb)
@@ -1141,7 +1142,15 @@ class TransferService:
         return any(re.search(p, n, re.I) for p in pats)
 
     def _in_use(self, mid, name) -> str:
-        """'selected' / 'running' when this name is the control's main or active program right now."""
+        """'selected' / 'running' when this name is the control's main or active program right now and may
+        therefore not be replaced; '' when it may."""
+        use, blocks = self._use(mid, name)
+        return use if blocks else ""
+
+    def _use(self, mid, name) -> tuple:
+        """(status, blocks): status 'running' / 'selected' / ''. HEIDENHAIN: the program selected for program
+        run may be replaced while the control is in a manual mode (the control and TNCremo allow that too - it
+        cannot run there); in program run (AUTO), MDI or an unknown mode it may not."""
         live = {}
         try:
             for x in self.store.machines():
@@ -1151,12 +1160,17 @@ class TransferService:
             pass
         n = base_name(name)
         if not n:
-            return ""
+            return "", False
+        selected = n in (base_name(live.get("program")), base_name(live.get("current_program")))
+        m = self.machines.get(mid) or {}
+        if (selected and m.get("control") == "heidenhain" and live.get("online")
+                and live.get("mode") == "MANUAL" and live.get("state") != "OFFLINE"):
+            return "selected", False
         if n == base_name(live.get("current_program")) and live.get("state") not in (None, "IDLE", "OFFLINE"):
-            return "running"
-        if n in (base_name(live.get("program")), base_name(live.get("current_program"))):
-            return "selected"
-        return ""
+            return "running", True
+        if selected:
+            return "selected", True
+        return "", False
 
     def prune_backups(self) -> int:
         """Keep at most backup_keep versions per program per machine, nothing older than backup_days, and
@@ -1293,7 +1307,8 @@ class TransferService:
         for it in items:
             if not it["dir"]:
                 it["protected"] = self._protected(m, it["name"])
-                it["in_use"] = self._in_use(mid, it["name"])
+                it["in_use"], blocks = self._use(mid, it["name"])
+                it["replace_ok"] = not blocks
         items.sort(key=lambda e: (not e["dir"], e["name"].upper()))
         return items
 

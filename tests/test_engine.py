@@ -25,6 +25,27 @@ def run(engine, script, t=0.0):
 
 
 class EngineTests(unittest.TestCase):
+    def test_warmup_program_is_no_cycle_and_no_part(self):
+        e = CycleEngine("m", EngineConfig(warmup_programs=[r"^O?9000$"]))
+        cyc, t = run(e, [
+            (5, dict(exec_state=I, main_program="O9000", part_count=5)),
+            (60, dict(exec_state=R, main_program="O9000", current_program="O9000", part_count=5)),
+            (1, dict(exec_state=R, main_program="O9000", current_program="O9000", part_count=6)),  # M30 counts
+            (10, dict(exec_state=I, main_program="O9000", part_count=6)),
+        ])
+        self.assertEqual(cyc, [])
+        self.assertIsNone(e.cycle)
+        e.update(Sample(ts=t, exec_state=R, mode=M.AUTO, main_program="O9000", current_program="O9000",
+                        part_count=6))
+        self.assertEqual(e.raw_state.value, "WARMUP")
+        cyc, _ = run(e, [
+            (30, dict(exec_state=R, main_program="O1234", current_program="O1234", part_count=6)),
+            (1, dict(exec_state=R, main_program="O1234", current_program="O1234", part_count=7)),
+            (10, dict(exec_state=I, main_program="O1234", part_count=7)),
+        ], t + 1)
+        self.assertEqual(len(cyc), 1)
+        self.assertEqual((cyc[0].program, cyc[0].parts), ("O1234", 1))
+
     def test_fanuc_macro_does_not_split_cycle(self):
         e = CycleEngine("m")
         cyc, _ = run(e, [

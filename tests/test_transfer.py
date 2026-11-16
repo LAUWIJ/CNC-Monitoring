@@ -371,3 +371,22 @@ def test_fanuc_program_name_from_header(tmp_path):
         assert program_header_name(str(p)) == want, data
     # sent under its own name, the header is kept as it is
     assert FanucFiles.prepare(b"%\n<TEST>\nG0 X0\n%", "TEST").split(b"\n")[1] == b"<TEST>"
+
+
+def test_heidenhain_selected_program_may_be_replaced_in_manual_mode(tmp_path):
+    svc, st = _svc(tmp_path)
+    svc.machines["h1"] = {"id": "h1", "control": "heidenhain", "transfer": "send"}
+    st.register_machine("h1", "H", "heidenhain")
+    sel = {"program": "PART.H", "current_program": "PART.H", "online": True}
+    st.update_live("h1", {**sel, "state": "IDLE", "mode": "AUTO"}, False)
+    assert svc._in_use("h1", "TNC:/nc_prog/PART.H") == "selected"       # program run: not replaced
+    st.update_live("h1", {**sel, "state": "SETUP", "mode": "MANUAL"}, False)
+    assert svc._in_use("h1", "TNC:/nc_prog/PART.H") == ""               # manual mode: allowed, like TNCremo
+    assert svc._use("h1", "PART.H") == ("selected", False)
+    st.update_live("h1", {**sel, "state": "RUNNING", "mode": "AUTO"}, False)
+    assert svc._in_use("h1", "PART.H") == "running"
+    st.update_live("h1", {**sel, "state": "OFFLINE", "mode": "MANUAL", "online": False}, False)
+    assert svc._in_use("h1", "PART.H") == "selected"                     # unknown now: stay safe
+    st.update_live("f1", {"state": "IDLE", "mode": "MANUAL", "online": True, "program": "O1001",
+                          "current_program": "O1001"}, False)
+    assert svc._in_use("f1", "O1001") == "selected"                      # other controls: unchanged

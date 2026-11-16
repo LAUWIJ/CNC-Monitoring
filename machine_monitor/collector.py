@@ -25,6 +25,9 @@ def engine_config(defaults: dict, mcfg: dict) -> EngineConfig:
             kw[k] = defaults[k]
     if mcfg.get("wait"):
         kw["wait_rules"] = list(mcfg["wait"])
+    if mcfg.get("warmup_programs"):
+        w = mcfg["warmup_programs"]
+        kw["warmup_programs"] = [w] if isinstance(w, str) else list(w)
     if "extra_subprogram_patterns" in mcfg:
         kw["subprogram_patterns"] = list(kw.get("subprogram_patterns", EngineConfig().subprogram_patterns)) + \
             list(mcfg["extra_subprogram_patterns"])

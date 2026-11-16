@@ -62,6 +62,9 @@ FIELDS = [
      "options": [["off", "Off"], ["read", "Browse + fetch"], ["send", "Browse + fetch + send"]],
      "help": "FANUC is off unless switched on here"},
     {"key": "alarms", "label": "Read alarms & messages", "type": "bool", "default": True},
+    {"key": "warmup_programs", "label": "Warm-up programs", "type": "programs",
+     "help": "Comma-separated, e.g. 9000, WARMUP.H. While one runs in automatic mode the machine shows "
+             "Warm-up: no part, no cycle, not counted as machining time."},
 ]
 SECRET = {"password"}
 ID_RE = re.compile(r"^[A-Za-z0-9_\-]{1,32}$")
@@ -175,6 +178,9 @@ class SettingsService:
                     vals[k] = {"set": bool(m.get(k))}
                 elif k == "transfer":
                     vals[k] = transfer_mode(m.get(k), c)
+                elif f["type"] == "programs":
+                    v = m.get(k) or []
+                    vals[k] = ", ".join(pattern_to_name(p) for p in ([v] if isinstance(v, str) else v))
                 elif k in m:
                     vals[k] = m[k]
                 else:
@@ -205,6 +211,18 @@ class SettingsService:
                     new.pop(k, None)
                 elif isinstance(v, str) and v:
                     new[k] = v
+                continue
+            if t == "programs":
+                names = [x.strip() for x in str(v or "").split(",") if x.strip()]
+                pats = [name_to_pattern(x) for x in names]
+                old = cur.get(k)
+                old = [old] if isinstance(old, str) else list(old or [])
+                if pats == old:
+                    continue
+                if pats:
+                    new[k] = pats
+                else:
+                    new.pop(k, None)
                 continue
             if t == "bool":
                 v = bool(v)

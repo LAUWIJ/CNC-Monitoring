@@ -162,3 +162,17 @@ def test_pin_lockout_per_computer():
     t.failed("pc-b")
     t.ok("pc-b")
     assert "pc-b" not in t.fails
+
+
+def test_warmup_programs_field(tmp_path):
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(CFG, encoding="utf-8")
+    svc = SettingsService(str(cfg), str(tmp_path / "data"), None)
+    svc.save({"id": "m2", "control": "heidenhain", "values": {"name": "DVF", "host": "192.168.1.22",
+              "warmup_programs": "9000, WARMUP.H"}, "wait": []})
+    m2 = tomllib.loads(cfg.read_text())["machine"][1]
+    assert m2["warmup_programs"] == ["^O?9000$", "^WARMUP\\.H$"]
+    assert svc.machines()["machines"][1]["values"]["warmup_programs"] == "9000, WARMUP.H"
+    svc.save({"id": "m2", "control": "heidenhain", "values": {"name": "DVF", "host": "192.168.1.22",
+              "warmup_programs": ""}, "wait": []})
+    assert "warmup_programs" not in tomllib.loads(cfg.read_text())["machine"][1]

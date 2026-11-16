@@ -73,6 +73,8 @@ class EngineConfig:
     counter_end_window_s: float = 30.0
     # [{"program": regex} or {"block": regex}, "reason": "robot"|"operator", "action": "end"|"pause"}]
     wait_rules: list = field(default_factory=list)
+    # regexes of warm-up programs: running one in AUTO is WARMUP - no cycle, no part, not machining time
+    warmup_programs: list = field(default_factory=list)
     subprogram_patterns: list = field(default_factory=lambda: [
         r"^O?9\d{3}$",          # Fanuc macro programs O9000-O9999 (M/G-code macros)
         r"^L\d+",               # Siemens L-subprograms
@@ -142,6 +144,7 @@ class CycleEngine:
             self._wait_rules.append((on, re.compile(r.get(on), re.I),
                                      "robot" if str(r.get("reason", "operator")).lower() == "robot" else "operator",
                                      "end" if str(r.get("action", "pause")).lower() == "end" else "pause"))
+        self._warm_re = [re.compile(p, re.I) for p in self.cfg.warmup_programs or []]
         self._wait_action = None
         self._pending = None          # part counted, waiting for the program to really end
         self.has_completion_signal = has_completion_signal
@@ -205,6 +208,10 @@ class CycleEngine:
         else:
             wait_hit = None
         raw = self.classify(s)
+        warm = bool(self._warm_re) and any((main and r.search(main)) or (cur and r.search(cur))
+                                           for r in self._warm_re)
+        if warm and raw == MachineState.RUNNING:
+            raw = MachineState.WARMUP
 
         # 1. accumulate time of the interval since the previous sample into the open cycle
         if self.cycle is not None and prev is not None and self._prev_raw is not None:
@@ -321,7 +328,7 @@ class CycleEngine:
                 self._offline_since = None
 
         # 5. open a new cycle
-        if self.cycle is None and self._counts_as_cycle_run(s):
+        if self.cycle is None and self._counts_as_cycle_run(s) and not warm:
             if main:
                 prog, path, src = main, s.main_program, "control"
             elif cur and not self.is_subprogram(cur):

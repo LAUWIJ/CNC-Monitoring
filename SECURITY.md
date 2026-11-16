@@ -8,7 +8,7 @@ reachable from the internet (no port forwarding, no public cloud VM) - not even 
 | What | Protection |
 |---|---|
 | Changing machines (⚙ Settings) | Admin password. Chosen on the first visit to the Settings page, stored only as a salted hash (PBKDF2-SHA256, Python standard library) in `data/admin.json`. Five wrong passwords from one computer make that computer wait 5 minutes (other computers can still log in). A login lasts 12 hours, is kept in that browser tab only and ends when the monitor restarts. Forgotten: `reset_admin_pi.bat` (or `python run.py --set-admin-password` on the monitor) sets a new one and logs out every browser. |
-| Sending programs to a control | Off by default, switched on per machine (`transfer = "send"`). Optional PIN (`[transfer] pin`); five wrong PINs from one computer make that computer wait 5 minutes. The running/selected program and protected programs (FANUC O8xxx/O9xxx) are never replaced; a replaced program is first copied to `data/transfer_backup/`. |
+| Sending programs to a control | Off by default, switched on per machine (`transfer = "send"`). Optional PIN (`[transfer] pin`); five wrong PINs from one computer make that computer wait 5 minutes. The running/selected program and protected programs (FANUC O8xxx/O9xxx) are never replaced (exception: HEIDENHAIN, whose selected program may be replaced while the control is in manual mode, as the control itself allows); a replaced program is first copied to `data/transfer_backup/`. |
 | Stored passwords | Never sent back to the browser. The HEIDENHAIN PLC code number is used for one login and not stored or logged. |
 | `config.toml`, `data/`, `certs/` | Kept out of Git (`.gitignore`); `data/` and `certs/` are also kept out of the deploy package. |
 
