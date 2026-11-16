@@ -395,6 +395,29 @@ add a test with the observed pattern first.
   TEXT stays "Active"!), NodeId = condition instance (same for come/go, the key), AlarmIdentifier = number,
   SourceName PLC, Severity 500. ConditionRefresh gives RefreshStart/End (2787/2788) from the Server.
 
+## 5d3. Tool life: when it runs out (Nov 2026)
+
+- `store.typical()` also returns `pitch_s`: plain median of the start-to-start gaps of the program's last 21
+  part starts (None with < 3 gaps). It includes robot loading / time between parts. No break filter: the user
+  rejected a "3x cycle + 10 min" cut-off because it fails for long cycles - the median handles breaks.
+- Card (`toolEta`): only for tool life in parts. Producing (in a cycle, RUNNING or WAIT_ROBOT): clock time =
+  now + rest of the current part (typical - elapsed) + (parts left - 1) x pitch. Otherwise "≈ X of production".
+  Without pitch it falls back to the cycle time (tooltip says so). Parts left is taken to include the part now
+  running (FANUC counts at the end of the part).
+
+## 5d4. Tool life used up = waiting for operator; FANUC operator messages (Nov 2026)
+
+- PUMA 2600MB (m6, 0i-TF Plus) stopped with **S-No.2170 TOOL LIFE COUNT END ALARM** - a PMC operator message
+  (2000-2999), not a CNC alarm: statinfo alarm=0, so it showed "Stationary". `cnc_rdopmsg(-1)` answered 4
+  (EW_ATTRIB) there. `FanucFocasDriver._read_opmsgs` now tries -1, then one type at a time (0-4), then
+  `cnc_rdopmsg3` (-1, per type); the first way that works is remembered; EW_FUNC/EW_NOOPT everywhere switches
+  it off. Not yet verified which way the 2600MB accepts - check with `probe_pi.bat m6` (raw shows rdopmsg[way]).
+- User's choice: no extra state. `MachineWorker.tool_life_wait`: standing still (IDLE) in AUTO, no open cycle,
+  and `store.tool_status` says the program's tool life is 0 -> exec WAITING, reason operator,
+  extra.waiting_for = "tool change - tool life used up" (card: "Waiting for operator: tool change ...").
+  Checked every 15 s; while waiting, FANUC tool life groups are re-read every 60 s so a reset by the operator
+  ends it (HEIDENHAIN: no extra tool table reads). MANUAL/MDI stays Stationary (operator is at the machine).
+
 ## 5d2. Warm-up programs (Nov 2026)
 
 - `warmup_programs = [regex, ...]` per machine (Settings: "Warm-up programs", plain names -> patterns like the

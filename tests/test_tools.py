@@ -107,3 +107,37 @@ def test_fanuc_m01_from_pmc_f9():
     assert d._read_m_stop(lib, 1) == "M00"
     lib.val = 0x10                                  # DM30 only
     assert d._read_m_stop(lib, 1) is None
+
+
+def test_pitch_is_median_of_start_to_start():
+    from machine_monitor.store import Store
+    # parts of 10 min, robot loading 2 min between them -> 12 min start to start; one lunch break of 45 min
+    starts = [10000 - i * 720 for i in range(8)]
+    starts.insert(3, starts[2] - 720)                   # keep it a run
+    starts = sorted(set(starts), reverse=True)
+    starts = starts[:4] + [s - 2700 for s in starts[4:]]   # a 45 min break between the 4th and 5th part
+    assert Store._pitch(starts, 600) == 720               # the median: one break does not count
+    assert Store._pitch(starts[:3], 600) is None          # too few parts
+    long = [100000 - i * 9000 for i in range(5)]          # 2.5 h cycles: no limit on the gap length
+    assert Store._pitch(long, 8400) == 9000
+
+
+def test_tool_life_used_up_while_standing_still_is_waiting_for_operator(tmp_path):
+    from machine_monitor.collector import MachineWorker
+    from machine_monitor.model import ExecState, Mode, Sample
+    from machine_monitor.store import Store
+    st = Store(str(tmp_path / "m.db"))
+    w = MachineWorker({"id": "m6", "name": "PUMA 2600MB", "control": "simulator"}, {}, st)
+    left = {"tool_left": 0, "tool_left_unit": "parts"}
+    st.tool_status = lambda mid, prog, live: left
+    s = Sample(ts=1000.0, exec_state=ExecState.IDLE, mode=Mode.AUTO, main_program="O1005")
+    w.tool_life_wait(s)
+    assert (s.exec_state, s.wait_reason) == (ExecState.WAITING, "operator")
+    assert "tool life" in s.extra["waiting_for"]
+    m = Sample(ts=1001.0, exec_state=ExecState.IDLE, mode=Mode.MANUAL)      # operator at the machine
+    w.tool_life_wait(m)
+    assert m.exec_state == ExecState.IDLE
+    left["tool_left"] = 7                                                    # life reset / tools changed
+    s2 = Sample(ts=1100.0, exec_state=ExecState.IDLE, mode=Mode.AUTO)
+    w.tool_life_wait(s2)
+    assert s2.exec_state == ExecState.IDLE

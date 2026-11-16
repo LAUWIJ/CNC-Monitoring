@@ -426,11 +426,25 @@ class Store:
             durs = [r[0] for r in self.db.execute(
                 "SELECT duration_s FROM cycles WHERE machine_id=? AND program=? AND result='COMPLETED' "
                 "ORDER BY start_ts DESC LIMIT 10", (mid, program)).fetchall()]
+            starts = [r[0] for r in self.db.execute(
+                "SELECT start_ts FROM cycles WHERE machine_id=? AND result IN ('COMPLETED','PARTIAL') "
+                "AND program=? ORDER BY start_ts DESC LIMIT 21", (mid, program)).fetchall()]
             last = self.db.execute("SELECT MAX(end_ts) FROM cycles WHERE machine_id=? AND result IN "
                                    "('COMPLETED','PARTIAL')", (mid,)).fetchone()[0]
-        res = {"typical_s": statistics.median(durs) if durs else None, "last_part_ts": last}
+        typ = statistics.median(durs) if durs else None
+        res = {"typical_s": typ, "last_part_ts": last, "pitch_s": self._pitch(starts, typ)}
         cache[key] = (now, res)
         return res
+
+    @staticmethod
+    def _pitch(starts: list, typ) -> Optional[float]:
+        """Usual time from the start of one part to the start of the next: the median of the gaps between the
+        last part starts of the program - the cycle plus everything between parts (robot loading, door, ...).
+        The median keeps an occasional break or night from counting. None with fewer than 3 gaps."""
+        gaps = [a - b for a, b in zip(starts, starts[1:]) if a - b > 0]
+        if len(gaps) < 3:
+            return None
+        return statistics.median(gaps)
 
     def machines(self) -> list:
         with self.lock:

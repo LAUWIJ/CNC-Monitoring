@@ -140,6 +140,15 @@ The card of a selected machine shows the tool in the spindle; the detail view li
 (median running time per tool per part, from the last 10 finished parts). Tool life is shown only where the
 **control** manages it - there is no manual counting.
 
+**Tool life used up**: when the machine stands still in automatic and the program's tool life is used up (e.g.
+FANUC message *TOOL LIFE COUNT END ALARM*), it shows as *Waiting for operator: tool change* instead of
+stationary.
+
+**When the tool life runs out**: next to *parts left* the card shows *out ≈ 14:35* while the machine is producing:
+the rest of the current part + the remaining parts x the usual time from one part start to the next (median of the
+last part starts of that program, so robot loading and other time between parts is included; being a median, an
+occasional break does not count). When the machine is not producing it shows how much production time is left instead.
+
 - **Fanuc**: the tool in the spindle from macro `#4120`. With tool life management (e.g. `T0199` = group 1) the
   monitor reads the groups (life, counter, sister tools) at the end of a part and shows *parts left* for the program.
 - **Siemens**: tool number and identifier (`actTNumber`, `actToolIdent`) with the normal values.

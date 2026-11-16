@@ -208,7 +208,8 @@ class FanucFocasDriver(Driver):
         L.cnc_rdmacro.restype = C.c_short
         for fn, argt in (("cnc_rdalmmsg2", [C.c_ushort, C.c_short, C.POINTER(C.c_short), C.c_void_p]),
                          ("cnc_rdalmmsg", [C.c_ushort, C.c_short, C.POINTER(C.c_short), C.c_void_p]),
-                         ("cnc_rdopmsg", [C.c_ushort, C.c_short, C.c_short, C.c_void_p])):
+                         ("cnc_rdopmsg", [C.c_ushort, C.c_short, C.c_short, C.c_void_p]),
+                         ("cnc_rdopmsg3", [C.c_ushort, C.c_short, C.POINTER(C.c_short), C.c_void_p])):
             if hasattr(L, fn):
                 getattr(L, fn).argtypes = argt
                 getattr(L, fn).restype = C.c_short
@@ -464,25 +465,68 @@ class FanucFocasDriver(Driver):
                     out += per
                     if per:
                         break
-        if self.read_opmsg and hasattr(L, "cnc_rdopmsg"):
-            msgs = (OPMSG * 5)()
-            ret = L.cnc_rdopmsg(h, -1, C.sizeof(msgs), msgs)
-            raw.append(f"rdopmsg={ret}")
-            if self._check(ret, "cnc_rdopmsg"):
+        if self.read_opmsg:
+            ok, msgs = self._read_opmsgs(raw)
+            if ok:
                 got = True
                 for m in msgs:
                     text = _ftext(bytes(m.data), m.char_num)
                     if m.datano < 0 or not text:
                         continue
                     out.append({"code": f"MSG {m.datano}" if m.datano else "MSG", "text": text})
-            elif ret in (1, 6):              # EW_FUNC / EW_NOOPT: not supported here
-                self.read_opmsg = False
         if getattr(self, "_st_emg", False) and not any("EMERG" in (a["text"] or "").upper() for a in out):
             out.insert(0, {"code": "EMG", "text": "Emergency stop"})
             got = True
         self.last_alarm_raw = f"statinfo alarm={int(flag)} emergency={int(getattr(self, '_st_emg', False))} | " + \
             ", ".join(raw)
         return out if got else None       # None = nothing could be read this time
+
+    def _read_opmsgs(self, raw):
+        """Operator messages (PMC messages 2000-2999, #3006). Series differ in what they accept: all five
+        message types at once (-1), one type at a time (0-4), or cnc_rdopmsg3. The first way that works is
+        remembered. (PUMA 2600MB, 0i-TF Plus: rdopmsg(-1) answers 4 = EW_ATTRIB.) Read-only."""
+        L, h = self.lib, self.h.value
+        ways = []
+        if hasattr(L, "cnc_rdopmsg"):
+            ways += ["all", "per_type"]
+        if hasattr(L, "cnc_rdopmsg3"):
+            ways += ["v3_all", "v3_per_type"]
+        if getattr(self, "_opmsg_way", None) in ways:
+            ways = [self._opmsg_way]
+        all_codes = []
+        for way in ways:
+            msgs, ok_any, codes = [], False, []
+            types = [-1] if way.endswith("all") else [0, 1, 2, 3, 4]
+            for t in types:
+                n = 5 if t == -1 else 1
+                buf = (OPMSG * 8)()                      # room to spare, whatever the series writes
+                if way.startswith("v3"):
+                    cnt = C.c_short(n)
+                    ret = L.cnc_rdopmsg3(h, t, C.byref(cnt), buf)
+                else:
+                    ret = L.cnc_rdopmsg(h, t, n * C.sizeof(OPMSG), buf)
+                codes.append(ret)
+                if self._check(ret, "cnc_rdopmsg"):
+                    ok_any = True
+                    msgs += list(buf[:n])
+            all_codes += codes
+            raw.append(f"rdopmsg[{way}]={'/'.join(str(c) for c in sorted(set(codes)))}")
+            if ok_any:
+                self._opmsg_way = way
+                seen, uniq = set(), []                   # one type at a time can repeat a message
+                for m in msgs:
+                    k = (m.datano, bytes(m.data))
+                    if k not in seen:
+                        seen.add(k)
+                        uniq.append(m)
+                return True, uniq
+        if not ways or (all_codes and all(c in (1, 6) for c in all_codes)):
+            self.read_opmsg = False                      # EW_FUNC / EW_NOOPT everywhere: not on this control
+        elif getattr(self, "_opmsg_way", None) is None:
+            self._opmsg_fail = getattr(self, "_opmsg_fail", 0) + 1
+            if self._opmsg_fail >= 3:                    # no way works on this control: stop asking
+                self.read_opmsg = False
+        return False, []
 
     def close(self) -> None:
         if self.lib is not None and self.connected:

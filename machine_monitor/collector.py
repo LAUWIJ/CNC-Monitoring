@@ -7,7 +7,7 @@ import time
 
 from .drivers import make_driver
 from .engine import Cycle, CycleEngine, EngineConfig, StateChange
-from .model import ExecState, Sample
+from .model import ExecState, Mode, Sample
 from .store import Store
 
 log = logging.getLogger("collector")
@@ -58,9 +58,40 @@ class MachineWorker(threading.Thread):
         self._alarm_open: dict = {}      # (code, text) -> alarm row id
         self._alarm_ok = False
         self._alarm_err_logged = False
+        self._tool_out = False           # tool life of the program used up (checked while standing still)
+        self._tool_check = 0.0
 
     # ------------------------------------------------------------- handling
+    def _tool_life_out(self) -> bool:
+        snap = self.engine.snapshot()
+        try:
+            st = self.store.tool_status(self.id, snap.get("program"), snap)
+        except Exception:
+            return False
+        return st.get("tool_left") is not None and st["tool_left"] <= 0
+
+    def tool_life_wait(self, s: Sample) -> None:
+        """Standing still in automatic between parts while the program's tool life is used up (FANUC: S-No.2170
+        TOOL LIFE COUNT END ALARM, a PMC message - not a CNC alarm): the machine waits for the operator to change
+        the tool, so show it as waiting for the operator instead of stationary."""
+        if not (s.online and s.exec_state == ExecState.IDLE and s.mode in (Mode.AUTO, Mode.UNKNOWN)
+                and self.engine.cycle is None):
+            self._tool_check = 0.0                   # look again the next time it stands still
+            return
+        if s.ts >= self._tool_check:
+            self._tool_check = s.ts + (60 if self._tool_out else 15)
+            if self._tool_out and not getattr(self.driver, "tool_life_after_every_cycle", False):
+                # FANUC: read the groups again, so a life reset by the operator ends the wait without waiting
+                # for the next part (HEIDENHAIN tool table reads stay limited to the agreed moments)
+                self.read_tool_life(None, s.ts)
+            self._tool_out = self._tool_life_out()
+        if self._tool_out:
+            s.exec_state, s.wait_reason = ExecState.WAITING, "operator"
+            s.extra = {**(s.extra or {}), "waiting_for": "tool change - tool life used up"}
+
     def handle(self, s: Sample, live: bool = True):
+        if live:
+            self.tool_life_wait(s)
         for ev in self.engine.update(s):
             if isinstance(ev, StateChange):
                 self.store.add_state(self.id, ev.state.value, ev.start_ts, ev.program)

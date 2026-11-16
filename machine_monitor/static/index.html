@@ -224,6 +224,7 @@ main { padding: 20px 24px 40px; display: grid; gap: 20px; }
 @media (max-width: 700px) { .sgrid { grid-template-columns: 1fr; } .swait { grid-template-columns: 1fr 1fr; } }
 .card .tlife { margin-top: 8px; font-size: 12px; color: var(--text2); padding: 3px 8px; border-radius: 6px;
   background: var(--surface2, rgba(127,127,127,.08)); display: inline-block; }
+.card .tlife .eta { white-space: nowrap; }
 .card .tlife.low { background: color-mix(in srgb, var(--paused, #e8a33d) 22%, transparent); color: var(--text); }
 .card .tlife.out { background: color-mix(in srgb, var(--alarm, #d64545) 25%, transparent); color: var(--text); }
 .cards.single .card .tlife { font-size: 14px; margin-top: 12px; }
@@ -640,7 +641,7 @@ function renderCards() {
         : `Cycle ${fmtDur(now - L.cycle_start - (L.cycle_wait_s || 0))}${L.current_program && L.current_program !== L.program ? ` · now in ${esc(L.current_program)}` : ""}`)
       : st === "OFFLINE"
         ? (m.stale && !L.error ? "No data from the monitor" : `Switched off or not reachable since ${fmtSince(L.state_since)}`)
-        : `${S.label} for ${fmtDur(now - (L.state_since || now))}`;
+        : `${S.label}${L.extra?.waiting_for && st === "WAITING" ? `: ${esc(L.extra.waiting_for)}` : ""} for ${fmtDur(now - (L.state_since || now))}`;
     return `<div class="card" data-mid="${esc(m.id)}" title="${mf ? "Click again to show all machines" : "Show details for " + esc(m.name)}" style="--c:${S.c}">
       <div class="top"><div><div class="name">${esc(m.name)}</div><div class="ctrl">${esc(m.control)}</div></div>
         <span class="chip" style="--c:${S.c}"><span class="dot"></span>${S.icon} ${S.label}</span></div>
@@ -684,13 +685,32 @@ function toolLeftLine(m) {
   const low = parts ? n <= 5 : n <= 30;
   const single = m.tool_left_group == null;            // HEIDENHAIN: a life per tool, no groups
   const tl = m.tool_left_tool ? toolLabel(String(m.tool_left_tool), m.tool_left_name, m.control).replace(/<[^>]+>/g, "") : "";
-  const what = single ? esc(tl) : `group ${m.tool_left_group}${tl ? ` (${esc(tl)})` : ""}`;
+  const what = single ? esc(tl) : `Group ${m.tool_left_group}${tl ? ` (${esc(tl)})` : ""}`;
   const mins = single && parts && m.tool_left_min != null ? ` <small>(${m.tool_left_min} min)</small>` : "";
   const tip = single
     ? "Tool life from the control's tool table (TIME1 - CUR_TIME), read at the end of every part; parts = minutes left / this tool's usual time per part. Lowest of the tools this program uses that have a life time set."
     : `Tool life from the control (tool life management). Lowest of the ${m.tool_left_groups} tool group(s) this program uses, read at the end of the last cycle.`;
   return `<div class="tlife${n <= 0 ? " out" : low ? " low" : ""}" title="${tip}">`
-    + `Tool life <b>${single && parts ? "≈ " : ""}${n} ${unit}</b>${mins} left · ${what}</div>`;
+    + `Tool life <b>${single && parts ? "≈ " : ""}${n} ${unit}</b>${mins} left · ${what}${toolEta(m, n, parts)}</div>`;
+}
+
+// when the tool life runs out, if the machine keeps making parts at its usual pace: the rest of the part
+// now running + the remaining parts x the usual start-to-start time (cycle + robot loading / time between
+// parts). Clock time while it is producing; otherwise only how much production time is left.
+function toolEta(m, n, parts) {
+  if (!parts || n <= 0) return "";
+  const L = m.live || {}, now = Date.now() / 1000, typ = m.typical_s;
+  const pitch = m.pitch_s || typ;
+  if (!pitch) return "";
+  const inCycle = L.cycle_start && !m.stale;
+  const restNow = inCycle && typ ? Math.max(0, typ - (now - L.cycle_start - (L.cycle_wait_s || 0))) : null;
+  const tip = `Estimate: ${inCycle ? "the rest of the current part + " : ""}${inCycle ? n - 1 : n} more part(s) x ${fmtDur(pitch)} `
+    + (m.pitch_s ? "(usual time from one part start to the next, including robot loading / time between parts)"
+                 : "(usual cycle time - not enough parts in a row yet to include the time between parts)");
+  const producing = inCycle || ["RUNNING", "WAIT_ROBOT"].includes(L.state);
+  if (!producing) return ` <span class="eta" title="${tip}">· ≈ ${fmtDur(n * pitch)} of production</span>`;
+  const t = now + (restNow ?? pitch) + Math.max(0, n - 1) * pitch;
+  return ` <span class="eta" title="${tip}">· Out ≈ <b>${fmtSince(t)}</b></span>`;
 }
 
 function cardMore(m, L, st, inCycle, now) {
@@ -1428,7 +1448,7 @@ function renderTools(m, rows) {
             left = `<b>${g.left_amount} min</b> left${est != null ? ` ≈ ${est} part${est === 1 ? "" : "s"}` : ""} · life ${g.life} min`;
           } else {
             left = g && g.left_amount != null ? `<b>${g.left_amount} ${g.left_unit}</b> left · life ${g.life} ${g.count_type === "cycles" ? "parts" : "min"} per tool`
-              : (t.group ? `group ${t.group}` : `<span class="hint">not managed</span>`);
+              : (t.group ? `Group ${t.group}` : `<span class="hint">not managed</span>`);
           }
           const cur = g && g.tools && g.use_tool > 0 ? g.tools[g.use_tool - 1] : null;
           const label = t.group

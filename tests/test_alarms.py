@@ -87,6 +87,19 @@ class FanucAlarmTests(unittest.TestCase):
                                            {"code": "SV0401", "text": "SERVO V-READY OFF"}])
         self.assertIn("per type", d.last_alarm_raw)
 
+    def test_operator_message_one_type_at_a_time(self):
+        """PUMA 2600MB (0i-TF Plus): rdopmsg(-1) answers 4 (EW_ATTRIB); asked per type it gives S-No.2170."""
+        lib = FakeFocas([], [(2170, "TOOL LIFE COUNT END ALARM")])
+        real = lib.cnc_rdopmsg
+
+        def by_type(h, typ, length, buf):
+            return 4 if typ == -1 else real(h, typ, length, buf)
+        lib.cnc_rdopmsg = by_type
+        d = fanuc(lib)
+        self.assertEqual(d.read_alarms(), [{"code": "MSG 2170", "text": "TOOL LIFE COUNT END ALARM"}])
+        self.assertEqual(d._opmsg_way, "per_type")
+        self.assertIn("rdopmsg[all]=4", d.last_alarm_raw)
+
     def test_operator_messages_unsupported_switches_off(self):
         d = fanuc(FakeFocas([], opmsg_ret=6))
         self.assertEqual(d.read_alarms(), [])
