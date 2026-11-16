@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import sqlite3
 import statistics
@@ -307,21 +308,37 @@ class Store:
             if not r or r.get("left_amount") is None:
                 continue
             amount, unit, minutes = r["left_amount"], r["left_unit"], None
+            expired = unit == "parts" and amount <= 0
             if g < 0 and unit == "min":
-                minutes = float(amount)
-                if r["ts"] <= cstart:                # read before this part started: take off what it ran
-                    minutes = max(0.0, minutes - running.get(str(-g), 0) / 60)
+                tl = (r.get("tools") or [{}])[0]
+                t1 = float(tl.get("time1", r["life"]) or 0)        # older rows: life = TIME1 (or TIME2)
+                t2 = float(tl.get("time2") or 0)
+                c0 = float(r["count"] or 0)                        # CUR_TIME when read
+                used = running.get(str(-g), 0) / 60 if r["ts"] <= cstart else 0.0   # this part, since then
+                c_now = c0 + used
+                expired = tl.get("status") == 2 or (t2 > 0 and c_now >= t2) or (t1 > 0 and c_now >= t1)
+                minutes = max(0.0, (t1 or t2) - c_now)
                 med = per_part.get(g)
                 if med and med > 0:
-                    amount, unit = int(minutes * 60 // med), "parts"
+                    # parts that can still be made, counted from the start of the part now running (so - like
+                    # a FANUC counter - the part in progress is included and the number drops at its end):
+                    # a part may start while CUR_TIME < TIME2 (checked at TOOL CALL only, the tool then keeps
+                    # cutting) and must not take the tool past TIME1
+                    u = med / 60
+                    lim = []
+                    if t2 > 0:
+                        lim.append(max(0, math.ceil((t2 - c0) / u)))
+                    if t1 > 0:
+                        lim.append(max(0, math.floor((t1 - c0) / u + 1e-9)))
+                    amount, unit = (min(lim) if lim else 0), "parts"
                 else:
                     amount = int(minutes)
             key = amount if unit == "parts" else amount / 10    # minutes without a part time: rank them late
             if best is None or key < best[0]:
-                best = (key, r, amount, unit, minutes)
+                best = (key, r, amount, unit, minutes, expired)
         if best is None:
             return {}
-        _, r, amount, unit, minutes = best
+        _, r, amount, unit, minutes, expired = best
         tools = r.get("tools") or []
         use = r.get("use_tool") or 0
         cur = tools[use - 1]["num"] if 0 < use <= len(tools) else None
@@ -330,7 +347,7 @@ class Store:
             name = live.get("tool_name")
         return {"tool_left": amount, "tool_left_unit": unit, "tool_left_group": r["grp"] if r["grp"] > 0 else None,
                 "tool_left_tool": cur, "tool_left_name": name, "tool_left_min": None if minutes is None else int(minutes),
-                "tool_left_groups": len(groups), "tool_left_ts": r["ts"]}
+                "tool_left_groups": len(groups), "tool_left_ts": r["ts"], "tool_left_expired": expired}
 
     def program_tools(self, machine_id: str, program: str, n: int = 10) -> list:
         """Tools a program uses: median running time per tool over its last n completed cycles."""

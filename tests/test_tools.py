@@ -128,7 +128,7 @@ def test_tool_life_used_up_while_standing_still_is_waiting_for_operator(tmp_path
     from machine_monitor.store import Store
     st = Store(str(tmp_path / "m.db"))
     w = MachineWorker({"id": "m6", "name": "PUMA 2600MB", "control": "simulator"}, {}, st)
-    left = {"tool_left": 0, "tool_left_unit": "parts"}
+    left = {"tool_left": 0, "tool_left_unit": "parts", "tool_left_expired": True}
     st.tool_status = lambda mid, prog, live: left
     s = Sample(ts=1000.0, exec_state=ExecState.IDLE, mode=Mode.AUTO, main_program="O1005")
     w.tool_life_wait(s)
@@ -137,7 +137,7 @@ def test_tool_life_used_up_while_standing_still_is_waiting_for_operator(tmp_path
     m = Sample(ts=1001.0, exec_state=ExecState.IDLE, mode=Mode.MANUAL)      # operator at the machine
     w.tool_life_wait(m)
     assert m.exec_state == ExecState.IDLE
-    left["tool_left"] = 7                                                    # life reset / tools changed
+    left.update(tool_left=7, tool_left_expired=False)                        # life reset / tools changed
     s2 = Sample(ts=1100.0, exec_state=ExecState.IDLE, mode=Mode.AUTO)
     w.tool_life_wait(s2)
     assert s2.exec_state == ExecState.IDLE

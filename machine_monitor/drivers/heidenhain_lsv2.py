@@ -81,6 +81,20 @@ def _read_markers_once(con, first: int, count: int):
     return con.read_plc_memory(first, mt, count)
 
 
+def _life_group(tn, time1, time2, cur, locked) -> dict:
+    """One HEIDENHAIN tool's life in the form of a FANUC tool group (grp -T, minutes).
+    TIME2 = max. life at TOOL CALL: at or above it the tool can no longer be called (the TNC takes the sister
+    tool RT or stops), but a tool already in the spindle keeps cutting. TIME1 = max. life (machine-dependent,
+    treated as a hard limit). Used up = locked (TL), or CUR_TIME at/over TIME2 or TIME1. Both limits are kept
+    in the tool entry, the parts estimate in store.tool_status needs them separately."""
+    t1, t2, cur = float(time1 or 0), float(time2 or 0), float(cur or 0)
+    expired = bool(locked) or (t2 > 0 and cur >= t2) or (t1 > 0 and cur >= t1)
+    life = t1 or t2
+    return {"grp": -tn, "count_type": "minutes", "life": round(life, 1), "count": round(cur, 1),
+            "ntool": 1, "nfree": 0 if expired else 1, "use_tool": 1,
+            "tools": [{"num": tn, "status": 2 if expired else 1, "time1": round(t1, 1), "time2": round(t2, 1)}]}
+
+
 def _is_itnc(con):
     """True/False when pyLSV2 knows the control type, None when it can't tell."""
     for holder in (getattr(con, "versions", None), con):
@@ -382,7 +396,7 @@ class HeidenhainLsv2Driver(Driver):
                 return float(v or 0)
             except (TypeError, ValueError):
                 return 0.0
-        out = []
+        out, self._no_life = [], set()
         for key in sorted(tools or [], key=str):
             try:
                 tn = int(key)
@@ -390,17 +404,15 @@ class HeidenhainLsv2Driver(Driver):
                 continue
             time1, time2 = num(self._itnc_field(tn, "TIME1")), num(self._itnc_field(tn, "TIME2"))
             if not (time1 or time2):
+                if self._itnc_field(tn, "TIME1") is not None:     # read fine, no life time set
+                    self._no_life.add(tn)
                 continue
             cur = self._itnc_field(tn, "CUR_TIME")
             if cur is None:
                 cur = self._itnc_field(tn, "CUR.TIME")          # column name on the iTNC 530
             tl = self._itnc_field(tn, "TL")                     # iTNC 530 answers a bool (False)
             locked = tl is True or str(tl or "").strip().upper() in ("L", "TRUE", "1")
-            life, cur = time1 or time2, num(cur)
-            expired = locked or cur >= life
-            out.append({"grp": -tn, "count_type": "minutes", "life": round(life, 1), "count": round(cur, 1),
-                        "ntool": 1, "nfree": 0 if expired else 1, "use_tool": 1,
-                        "tools": [{"num": tn, "status": 2 if expired else 1}]})
+            out.append(_life_group(tn, time1, time2, num(cur), locked))
         return out
 
     def _read_tool(self):
@@ -488,10 +500,16 @@ class HeidenhainLsv2Driver(Driver):
         if not names:
             return False
         self._tool_names, self._tool_life = names, life
+        self._no_life = {int(t) for t in names if t not in life and t.isdigit()}
         return True
 
     # the collector calls read_tool_life when connecting (groups=None) and after EVERY part (not only FANUC groups)
     tool_life_after_every_cycle = True
+
+    def tools_without_life(self) -> set:
+        """Tool numbers that the read just done found WITHOUT a life time (TIME1 and TIME2 both 0, e.g. set back
+        to 0 to stop monitoring). The collector clears those that it still has as monitored."""
+        return set(getattr(self, "_no_life", set()))
 
     def read_tool_life(self, groups=None):
         """Tool life of every tool with a life time set (TIME1, else TIME2; minutes), in the same form as a
@@ -502,6 +520,7 @@ class HeidenhainLsv2Driver(Driver):
             return []
         fresh = self._read_tool_table(self._table_prog, min_gap=20 if groups is not None else 0)
         if not fresh and groups is not None:
+            self._no_life = set()
             return []                             # read moments ago (very short part): nothing new
         out = []
         for t, v in self._tool_life.items():
@@ -509,11 +528,7 @@ class HeidenhainLsv2Driver(Driver):
                 tn = int(t)
             except ValueError:
                 continue
-            life = v["time1"] or v["time2"]
-            expired = v.get("locked") or v["cur_time"] >= life
-            out.append({"grp": -tn, "count_type": "minutes", "life": round(life, 1), "count": round(v["cur_time"], 1),
-                        "ntool": 1, "nfree": 0 if expired else 1, "use_tool": 1,
-                        "tools": [{"num": tn, "status": 2 if expired else 1}]})
+            out.append(_life_group(tn, v["time1"], v["time2"], v["cur_time"], v.get("locked")))
         return out
 
     def read_alarms(self):

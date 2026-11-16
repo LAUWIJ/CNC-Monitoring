@@ -418,6 +418,18 @@ add a test with the observed pattern first.
   Checked every 15 s; while waiting, FANUC tool life groups are re-read every 60 s so a reset by the operator
   ends it (HEIDENHAIN: no extra tool table reads). MANUAL/MDI stays Stationary (operator is at the machine).
 
+- HEIDENHAIN parts left (2026-11-16, user's rule): TIME2 = max. life at TOOL CALL (checked only there; a tool
+  in the spindle keeps cutting past it), TIME1 = max. life (hard limit). Both are kept per tool in the tool
+  entry (`_life_group`: tools[0].time1/time2; older rows only have life). Parts = min(ceil((TIME2 - c0)/u),
+  floor((TIME1 - c0)/u)), c0 = CUR_TIME at the start of the part in progress, u = usual minutes per part - so
+  like a FANUC counter the running part is included and the number drops at its end ("Out ≈" relies on that).
+  `tool_left_expired` = TL, or CUR_TIME (live) >= TIME2 or >= TIME1; only then red / "waiting for operator".
+  "0 parts" with time left (less than one part's worth) is orange. Assumes one TOOL CALL per part.
+- Life time set back to 0 on the control (TIME1 = TIME2 = 0 = stop monitoring): the driver reports those tools
+  via `tools_without_life()` (TNC: every tool of the freshly read table without a life time; iTNC: the asked
+  tools whose TIME1/TIME2 read as 0); the collector stores an empty row (life 0 -> left None) for each one it
+  still has as monitored, so the card/detail view drop it. Before 2026-11-16 such a tool kept its last value.
+
 ## 5d2. Warm-up programs (Nov 2026)
 
 - `warmup_programs = [regex, ...]` per machine (Settings: "Warm-up programs", plain names -> patterns like the

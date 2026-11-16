@@ -137,9 +137,22 @@ def test_card_shows_heidenhain_tool_life_in_parts(tmp_path):
                            tool_info={"9": {"name": "FACEMILL-44", "group": None}, "59": {"name": "LANGFAN", "group": None}}))
     r = st.tool_status("m", "A", {"tool": "59", "tool_name": "LANGFAN", "cycle_start": 2000,
                                   "cycle_tool_times": {"9": 120}})
-    # 39 min left, 2 min of it already used in this part -> 37 min / 5 min per part = 7 parts
+    # 39.5 min left at the start of this part, 2 min of it used so far: 37 min shown, and 39.5 / 5 = 7 parts -
+    # counted from the start of the part (like a FANUC counter, the part in progress is still included)
     assert r["tool_left"] == 7 and r["tool_left_unit"] == "parts" and r["tool_left_min"] == 37
     assert r["tool_left_group"] is None and r["tool_left_tool"] == 9 and r["tool_left_name"] == "FACEMILL-44"
+    assert r["tool_left_expired"] is False
+    g2 = {**g, "count": 20.0}                       # 40 min at the start: 8 parts, also while 2 min are used
+    assert st.add_tool_life("m", 1500.0, g2)
+    r = st.tool_status("m", "A", {"cycle_start": 2000, "cycle_tool_times": {"9": 120}})
+    assert (r["tool_left"], r["tool_left_min"]) == (8, 38)
+    g3 = {**g, "count": 57.0}                       # 3 min left: no full part any more, but not used up
+    assert st.add_tool_life("m", 3000.0, g3)
+    r = st.tool_status("m", "A", {})
+    assert r["tool_left"] == 0 and r["tool_left_expired"] is False
+    g4 = {**g, "count": 60.0}                       # time up: the control locks the tool
+    assert st.add_tool_life("m", 3500.0, g4)
+    assert st.tool_status("m", "A", {})["tool_left_expired"] is True
 
 
 def test_address_from_binary_map_file():
@@ -254,3 +267,52 @@ def test_route_chosen_by_what_the_control_answers():
     def boom():
         raise OSError("refused")
     assert not _spindle_status_works(NS(spindle_tool_status=boom))
+
+
+def test_time2_is_checked_at_tool_call_time1_is_the_hard_limit(tmp_path):
+    """TIME2 = max. life at TOOL CALL (a tool in the spindle keeps cutting past it), TIME1 = max. life."""
+    from machine_monitor.drivers.heidenhain_lsv2 import _life_group
+    from machine_monitor.engine import Cycle
+    from machine_monitor.store import Store
+    st = Store(str(tmp_path / "t.db"))
+    for i in range(3):                                   # T9 cuts 5 min per part
+        st.add_cycle(Cycle("m", "A", None, "control", 100 + i * 400, end_ts=400 + i * 400, result="COMPLETED",
+                           tool_times={"9": 300}, tool_info={"9": {"name": "FREES", "group": None}}))
+
+    def left(cur, live=None, ts=1000.0):
+        st.add_tool_life("m", ts, _life_group(9, 60, 50, cur, False))
+        return st.tool_status("m", "A", live or {})
+    r = left(42)            # parts can start at 42 and 47 (< TIME2 50); TIME1 would allow 3
+    assert (r["tool_left"], r["tool_left_expired"]) == (2, False)
+    r = left(40, ts=1100.0)  # starts at 40 and 45; 50 is not < TIME2 -> 2
+    assert r["tool_left"] == 2
+    r = left(47, {"cycle_start": 2000, "cycle_tool_times": {"9": 240}}, ts=1200.0)
+    # the last part started at 47 and is now at 51 - past TIME2, may finish, but needs changing after it
+    assert (r["tool_left"], r["tool_left_expired"]) == (1, True)
+    r = left(50, ts=1300.0)  # at TIME2: cannot be called any more -> used up, although TIME1 is 10 min away
+    assert (r["tool_left"], r["tool_left_expired"]) == (0, True)
+    g = _life_group(9, 60, 0, 58, False)                 # only TIME1: 2 min left, less than a part
+    assert g["tools"][0]["status"] == 1
+    st.add_tool_life("m", 1400.0, g)
+    r = st.tool_status("m", "A", {})
+    assert (r["tool_left"], r["tool_left_expired"]) == (0, False)
+    assert _life_group(9, 0, 50, 10, True)["tools"][0]["status"] == 2    # locked (TL) on the control
+
+
+def test_life_time_set_back_to_zero_stops_monitoring(tmp_path):
+    """TIME1 and TIME2 put back to 0 on the control: the tool must not stay 'monitored' with its old value."""
+    from types import SimpleNamespace as NS
+    from machine_monitor.collector import MachineWorker
+    from machine_monitor.drivers.heidenhain_lsv2 import _life_group
+    from machine_monitor.store import Store
+    st = Store(str(tmp_path / "t.db"))
+    w = MachineWorker({"id": "m", "name": "DVF", "control": "simulator"}, {}, st)
+    state = {"life": [_life_group(9, 60, 50, 20, False)], "none": set()}
+    w.driver = NS(read_tool_life=lambda groups=None: state["life"], tools_without_life=lambda: state["none"])
+    w.read_tool_life(None, 1000.0)
+    assert st.tool_life_now("m")[-9]["left_amount"] == 40
+    state["life"], state["none"] = [], {9}          # both set to 0 on the control
+    w.read_tool_life({"9"}, 1100.0)
+    assert st.tool_life_now("m")[-9]["left_amount"] is None
+    w.read_tool_life({"9"}, 1200.0)                 # stays cleared, no new row every part
+    assert len(st.db.execute("SELECT * FROM tool_life WHERE grp=-9").fetchall()) == 2

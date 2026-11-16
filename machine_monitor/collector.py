@@ -68,7 +68,9 @@ class MachineWorker(threading.Thread):
             st = self.store.tool_status(self.id, snap.get("program"), snap)
         except Exception:
             return False
-        return st.get("tool_left") is not None and st["tool_left"] <= 0
+        # really used up (FANUC count reached, HEIDENHAIN time up) - not "less than one part's worth left",
+        # which a HEIDENHAIN still runs
+        return bool(st.get("tool_left_expired"))
 
     def tool_life_wait(self, s: Sample) -> None:
         """Standing still in automatic between parts while the program's tool life is used up (FANUC: S-No.2170
@@ -119,6 +121,16 @@ class MachineWorker(threading.Thread):
         try:
             for g in fn(groups) or []:
                 self.store.add_tool_life(self.id, ts, g)
+            # tools whose life time was set back to 0 on the control (monitoring switched off): store an empty
+            # row, so the dashboard stops showing the last value
+            cleared = getattr(self.driver, "tools_without_life", lambda: set())()
+            if cleared:
+                for grp, r in self.store.tool_life_now(self.id).items():
+                    if grp < 0 and -grp in cleared and r.get("left_amount") is not None:
+                        self.store.add_tool_life(self.id, ts, {"grp": grp, "count_type": "minutes", "life": 0,
+                                                               "count": 0, "ntool": 1, "nfree": 0, "use_tool": 0,
+                                                               "tools": [{"num": -grp, "status": 0}]})
+                        log.info("[%s] T%d: no life time on the control any more - not monitored", self.id, -grp)
         except Exception as e:
             log.warning("[%s] tool life: %s", self.id, e)
 

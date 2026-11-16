@@ -688,9 +688,10 @@ function toolLeftLine(m) {
   const what = single ? esc(tl) : `Group ${m.tool_left_group}${tl ? ` (${esc(tl)})` : ""}`;
   const mins = single && parts && m.tool_left_min != null ? ` <small>(${m.tool_left_min} min)</small>` : "";
   const tip = single
-    ? "Tool life from the control's tool table (TIME1 - CUR_TIME), read at the end of every part; parts = minutes left / this tool's usual time per part. Lowest of the tools this program uses that have a life time set."
+    ? "Tool life from the control's tool table, read at the end of every part. Parts = how many more parts can start while CUR_TIME is below TIME2 (checked at TOOL CALL - a tool in the spindle keeps cutting) without taking the tool past TIME1, with this tool's usual time per part. Minutes = until TIME1 (or TIME2 if only that is set). Lowest of the tools this program uses that have a life time set."
     : `Tool life from the control (tool life management). Lowest of the ${m.tool_left_groups} tool group(s) this program uses, read at the end of the last cycle.`;
-  return `<div class="tlife${n <= 0 ? " out" : low ? " low" : ""}" title="${tip}">`
+  const out = m.tool_left_expired ?? n <= 0;
+  return `<div class="tlife${out ? " out" : low || n <= 0 ? " low" : ""}" title="${tip}">`
     + `Tool life <b>${single && parts ? "≈ " : ""}${n} ${unit}</b>${mins} left · ${what}${toolEta(m, n, parts)}</div>`;
 }
 

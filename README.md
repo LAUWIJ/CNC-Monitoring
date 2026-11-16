@@ -140,6 +140,9 @@ The card of a selected machine shows the tool in the spindle; the detail view li
 (median running time per tool per part, from the last 10 finished parts). Tool life is shown only where the
 **control** manages it - there is no manual counting.
 
+**HEIDENHAIN**: a part can start while the tool's CUR_TIME is below TIME2 (the control checks TIME2 only at TOOL
+CALL - a tool in the spindle keeps cutting) and must not take it past TIME1; *parts left* is counted that way.
+
 **Tool life used up**: when the machine stands still in automatic and the program's tool life is used up (e.g.
 FANUC message *TOOL LIFE COUNT END ALARM*), it shows as *Waiting for operator: tool change* instead of
 stationary.
