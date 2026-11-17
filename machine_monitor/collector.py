@@ -115,6 +115,19 @@ class MachineWorker(threading.Thread):
                     self.read_tool_life(groups, ev.end_ts or s.ts)
                 if live:
                     log.info("[%s] cycle %s %s %.0fs (%s)", self.id, ev.program, ev.result, ev.duration_s, ev.end_reason)
+        fresh = getattr(self.driver, "fresh_tool_life", None) if live else None
+        if fresh is not None:
+            # HEIDENHAIN: tool table read at the start of a part after a setup (tools swapped / life reset):
+            # store it now. Read as the part starts: dated at the part's start, so the running time of this part
+            # is counted on top of it (store.tool_status); a read later in a part (unknown tool) keeps its own time
+            try:
+                groups = fresh()
+                if groups is not None:
+                    c = self.engine.cycle
+                    near_start = c is not None and 0 <= s.ts - c.start_ts < 30
+                    self._store_tool_life(groups, c.start_ts if near_start else s.ts)
+            except Exception as e:
+                log.warning("[%s] tool life: %s", self.id, e)
         if live and (s.ts - self._last_live >= 2.0 or self.engine.state_since >= self._last_live):
             snap = self.engine.snapshot()
             snap["error"] = self.last_error
@@ -127,20 +140,23 @@ class MachineWorker(threading.Thread):
         if fn is None:
             return
         try:
-            for g in fn(groups) or []:
-                self.store.add_tool_life(self.id, ts, g)
-            # tools whose life time was set back to 0 on the control (monitoring switched off): store an empty
-            # row, so the dashboard stops showing the last value
-            cleared = getattr(self.driver, "tools_without_life", lambda: set())()
-            if cleared:
-                for grp, r in self.store.tool_life_now(self.id).items():
-                    if grp < 0 and -grp in cleared and r.get("left_amount") is not None:
-                        self.store.add_tool_life(self.id, ts, {"grp": grp, "count_type": "minutes", "life": 0,
-                                                               "count": 0, "ntool": 1, "nfree": 0, "use_tool": 0,
-                                                               "tools": [{"num": -grp, "status": 0}]})
-                        log.info("[%s] T%d: no life time on the control any more - not monitored", self.id, -grp)
+            self._store_tool_life(fn(groups) or [], ts)
         except Exception as e:
             log.warning("[%s] tool life: %s", self.id, e)
+
+    def _store_tool_life(self, groups: list, ts: float) -> None:
+        for g in groups:
+            self.store.add_tool_life(self.id, ts, g)
+        # tools whose life time was set back to 0 on the control (monitoring switched off): store an empty
+        # row, so the dashboard stops showing the last value
+        cleared = getattr(self.driver, "tools_without_life", lambda: set())()
+        if cleared:
+            for grp, r in self.store.tool_life_now(self.id).items():
+                if grp < 0 and -grp in cleared and r.get("left_amount") is not None:
+                    self.store.add_tool_life(self.id, ts, {"grp": grp, "count_type": "minutes", "life": 0,
+                                                           "count": 0, "ntool": 1, "nfree": 0, "use_tool": 0,
+                                                           "tools": [{"num": -grp, "status": 0}]})
+                    log.info("[%s] T%d: no life time on the control any more - not monitored", self.id, -grp)
 
     def track_alarms(self, alarms, ts: float):
         """Diff the active alarm list against what is open: open new rows, close cleared ones."""
@@ -187,6 +203,24 @@ class MachineWorker(threading.Thread):
             self.handle(self.driver.sample_at(t), live=False)
             self.track_alarms(self.driver.read_alarms(), t)
             t += step
+
+    # --------------------------------------------------- restart of the monitor: hand the open part over
+    def take_over(self, h) -> None:
+        """Continue the part the previous run of the monitor had open (see CycleEngine.take_over)."""
+        if not h:
+            return
+        prog = (h.get("cycle") or {}).get("program")
+        lim = None
+        try:
+            t = self.store.typical(self.id, prog) if prog else {}
+            if t.get("pitch_s"):
+                lim = 0.9 * t["pitch_s"]          # the next part cannot have started before this
+            elif t.get("typical_s"):
+                lim = 1.1 * t["typical_s"]
+        except Exception:
+            pass
+        self.engine.take_over(h, lim)
+        log.info("[%s] open part of %s taken over from before the restart", self.id, prog)
 
     # ----------------------------------------------------------------- loop
     def run(self):
@@ -239,3 +273,44 @@ class MachineWorker(threading.Thread):
             self.stop_evt.wait(max(0.05, self.poll - (time.time() - t0)))
         self.close_alarms(time.time())
         self.driver.close()
+
+
+# ------------------------------------------------------- open parts across a restart of the monitor
+HANDOVER_FILE = "handover.json"
+
+
+def save_handover(workers, data_dir: str) -> int:
+    """Clean stop: write the open part of every machine, for the next run to continue. Returns the count."""
+    import json
+    import os
+    out = {}
+    for w in workers:
+        try:
+            h = w.engine.export_open()
+        except Exception:
+            h = None
+        if h:
+            out[w.id] = h
+    os.makedirs(data_dir, exist_ok=True)
+    path = os.path.join(data_dir, HANDOVER_FILE)
+    with open(path + ".tmp", "w", encoding="utf-8") as f:
+        json.dump(out, f)
+    os.replace(path + ".tmp", path)
+    return len(out)
+
+
+def load_handover(data_dir: str) -> dict:
+    """Open parts saved by the previous run ({machine id: ...}); the file is removed so it is used only once."""
+    import json
+    import os
+    path = os.path.join(data_dir, HANDOVER_FILE)
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return {}
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+    return data if isinstance(data, dict) else {}

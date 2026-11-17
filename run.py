@@ -13,7 +13,7 @@ import threading
 import time
 import tomllib
 
-from machine_monitor.collector import MachineWorker
+from machine_monitor.collector import MachineWorker, load_handover, save_handover
 from machine_monitor.store import Store
 from machine_monitor.web import serve
 
@@ -60,9 +60,11 @@ class Runtime:
                 if old_m.get(i) == new_m.get(i):
                     continue
                 w = self.workers.pop(i, None)
+                handover = None
                 if w is not None:
                     w.stop_evt.set()
                     w.join(20)
+                    handover = w.engine.export_open() if not w.is_alive() else None
                     logging.info("[%s] stopped for new settings", i)
                 m = new_m.get(i)
                 if m is None:
@@ -71,6 +73,7 @@ class Runtime:
                 elif m.get("enabled", True):
                     try:
                         w = MachineWorker(m, defaults, self.store)
+                        w.take_over(handover)        # a part in progress carries on with the new settings
                         w.start()
                         self.workers[i] = w
                         logging.info("[%s] started with new settings", i)
@@ -599,8 +602,23 @@ def main():
             w.backfill(args.backfill_hours)
         rt.workers[m["id"]] = w
     workers = list(rt.workers.values())
+    data_dir = os.path.join(HERE, "data")
+    if not args.demo:
+        handover = load_handover(data_dir)       # parts open when the previous run stopped (deploy, reboot)
+        for w in workers:
+            w.take_over(handover.get(w.id))
     for w in workers:
         w.start()
+
+    # systemd stops the service with SIGTERM (deploy, reboot): stop like Ctrl+C, so the open parts are saved
+    import signal
+
+    def _term(signum, frame):
+        raise KeyboardInterrupt
+    try:
+        signal.signal(signal.SIGTERM, _term)
+    except (ValueError, OSError):
+        pass
 
     def resource_watch():
         while True:
@@ -645,9 +663,20 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
-        for w in list(rt.workers.values()):
+        signal.signal(signal.SIGTERM, signal.SIG_DFL)     # a second stop signal ends it the hard way
+        ws = list(rt.workers.values())
+        for w in ws:
             w.stop_evt.set()
-        srv.shutdown()
+        deadline = time.time() + 15
+        for w in ws:
+            w.join(max(0.1, deadline - time.time()))       # finish the poll in progress, close the connection
+        if not args.demo:
+            try:
+                n = save_handover([w for w in ws if not w.is_alive()], data_dir)
+                logging.info("stopped - %d open part(s) saved for the next start", n)
+            except Exception as e:
+                logging.warning("open parts not saved: %s", e)
+        srv.server_close()
 
 
 if __name__ == "__main__":

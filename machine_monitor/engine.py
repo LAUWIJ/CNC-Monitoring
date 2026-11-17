@@ -147,6 +147,7 @@ class CycleEngine:
         self._warm_re = [re.compile(p, re.I) for p in self.cfg.warmup_programs or []]
         self._wait_action = None
         self._pending = None          # part counted, waiting for the program to really end
+        self._handover = None         # open part saved by the previous run of the monitor (take_over)
         self.has_completion_signal = has_completion_signal
 
         self.cycle: Optional[Cycle] = None
@@ -212,6 +213,10 @@ class CycleEngine:
                                            for r in self._warm_re)
         if warm and raw == MachineState.RUNNING:
             raw = MachineState.WARMUP
+
+        # 0. first online sample after a restart of the monitor: continue the part it had open (take_over)
+        if self._handover is not None and s.online:
+            events += self._apply_handover(s, main, warm)
 
         # 1. accumulate time of the interval since the previous sample into the open cycle
         if self.cycle is not None and prev is not None and self._prev_raw is not None:
@@ -355,6 +360,74 @@ class CycleEngine:
         self._prev_raw = raw
         self.last_sample = s
         return events
+
+    # ------------------------------------------------------- restart of the monitor (deploy, reboot)
+    HANDOVER_MAX_S = 180.0
+
+    def export_open(self) -> Optional[dict]:
+        """The open part, to be continued by the next run of the monitor (clean stop only)."""
+        c, s = self.cycle, self.last_sample
+        if c is None or s is None:
+            return None
+        return {"saved_ts": s.ts, "cycle": dict(c.__dict__), "last_part": self._last_part,
+                "last_end": self._last_end, "state": self._prev_raw.value if self._prev_raw else None,
+                "tool": s.tool, "pending": self._pending is not None}
+
+    def take_over(self, h: Optional[dict], max_wall_s: Optional[float] = None) -> None:
+        """Open part saved by the previous run. max_wall_s: the next part of this program cannot have started
+        before this many seconds after the saved part's start (from the usual start-to-start time)."""
+        if h:
+            self._handover = {**h, "max_wall_s": max_wall_s}
+
+    def _apply_handover(self, s: Sample, main, warm) -> list:
+        """Continue the saved part when it is certainly still the same part: the gap is short, the same program
+        is running, no counter rose and the next part could not have started yet. Otherwise it ended during the
+        gap (or that cannot be told): store it as PARTIAL - a part from a counter that rose, or (no counter)
+        one part, never 0 when nothing says it was reset."""
+        h, self._handover = self._handover, None
+        gap = s.ts - float(h.get("saved_ts") or 0)
+        if not 0 <= gap <= self.HANDOVER_MAX_S:
+            return []                                     # too long ago: as without a handover
+        try:
+            c = Cycle(**h["cycle"])
+        except TypeError:
+            return []                                     # saved by an incompatible version
+        pc0, pe0 = h.get("last_part"), h.get("last_end")
+        counters = (s.part_count is not None and pc0 is not None) or (s.program_end_count is not None and pe0 is not None)
+        counted = bool(h.get("pending")) or \
+            (s.part_count is not None and pc0 is not None and s.part_count > pc0) or \
+            (s.program_end_count is not None and pe0 is not None and s.program_end_count > pe0)
+        lim = h.get("max_wall_s")
+        if (self._counts_as_cycle_run(s) and not warm and main and main == c.program and not counted
+                and (not lim or s.ts - c.start_ts <= lim)):
+            st = h.get("state")
+            if st in (MachineState.RUNNING.value, MachineState.SETUP.value):
+                c.run_s += gap
+                t = h.get("tool")
+                if t and t == s.tool:
+                    c.tool_times[t] = c.tool_times.get(t, 0.0) + gap
+            elif st == MachineState.ALARM.value:
+                c.alarm_s += gap
+            elif st == MachineState.PAUSED.value:
+                c.pause_s += gap
+            elif st in (MachineState.WAITING.value, MachineState.WAIT_ROBOT.value):
+                c.wait_s += gap
+            self.cycle = c
+            self._last_part, self._last_end = pc0, pe0     # counter edges from here as before the restart
+            return []
+        c.end_ts, c.result, c.end_reason = max(float(h["saved_ts"]), c.start_ts), "PARTIAL", "MONITOR_RESTART"
+        if counted:
+            c.parts = 1
+            c.part_count_end = s.part_count
+        elif counters:
+            c.parts = 0                                   # a counter says: no part (reset during the gap)
+        else:
+            c.parts = 1
+        if c.run_s < self.cfg.min_run_s:
+            return []
+        if c.program is None:
+            c.program = "(unknown)"
+        return [c]
 
     def _split_at(self, p: dict, s: Sample) -> list:
         """Close the open cycle at the counter moment p['ts']; the time after it belongs to a new cycle."""

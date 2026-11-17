@@ -96,7 +96,8 @@ The program name the control is executing right now is **not** used to split cyc
   While one runs in automatic mode the timeline shows *Warm-up*: no cycle, no part, not counted as running time.
 - **Waiting for robot / operator**: per machine (Settings page, or `[[machine.wait]]` in `config.toml`), rules mark program names (e.g. a robot handshake macro `O9022` or a robot load program `LOAD_PRODUCT_0.H`) as waiting. The timeline shows *Waiting for robot* and *Waiting for operator* separately; that time is never counted in the cycle time (`action = "end"`: the part is done when the wait starts, `"pause"`: wait inside the cycle). The cycle log shows the waiting time and the time spent per sub-program/macro.
 - **Pallet machines (Siemens)**: `[machine.cycle_signal] block_regex = '\bM0?60\b'` ends the cycle at the M60 block and shows the clearance wait as *Waiting for operator*.
-- **Partial cycles**: a part that was already running when the monitor started, restarted (e.g. `deploy.bat`) or reconnected is logged as **Partial**: it counts as a part, but not for cycle-time statistics. `--merge-split-cycles` (`fix_history_pi.bat`) also marks such cycles in older history.
+- **Partial cycles**: a part that was already running when the monitor started or reconnected is logged as **Partial**: it counts as a part, but not for cycle-time statistics. `--merge-split-cycles` (`fix_history_pi.bat`) also marks such cycles in older history.
+- **Restarts (`deploy.bat`, reboot, a machine's settings saved)**: on a clean stop the monitor saves the part each machine has open (`data/handover.json`) and continues it after the restart - when the gap is under 3 minutes, the same program is running, no part counter rose and the next part could not have started yet (from the usual start-to-start time). The gap counts as the state it was in. Otherwise the saved part is stored as Partial (a part, unless a part counter shows it was reset). After a power cut parts are still Partial.
 - **Noise**: cycles with less than 3 s actual running time are ignored.
 
 ## Settings page (machines in the browser)
@@ -165,6 +166,7 @@ occasional break does not count). When the machine is not producing it shows how
     machine's own PLC compiler output (`MainPgm.map` or `MainPgm.lst`) after *Copy from control* (see below), or
     set per machine with `tool_in_spindle = "D17032"`. Names and life come from `TNC:\table\tool.t`, read when
     connecting, at the start of a part after a setup, at the end of every part and for an unknown tool number.
+    Tools swapped or a life reset in manual mode show their new life from the start of the next part.
 - Life in minutes is turned into parts with the tool's usual time per part.
 
 `probe_tools_pi.bat <id>` shows, read-only, what a control offers.

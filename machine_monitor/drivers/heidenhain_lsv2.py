@@ -501,6 +501,7 @@ class HeidenhainLsv2Driver(Driver):
             return False
         self._tool_names, self._tool_life = names, life
         self._no_life = {int(t) for t in names if t not in life and t.isdigit()}
+        self._life_fresh = True            # not yet handed to the collector (see fresh_tool_life)
         return True
 
     # the collector calls read_tool_life when connecting (groups=None) and after EVERY part (not only FANUC groups)
@@ -522,6 +523,10 @@ class HeidenhainLsv2Driver(Driver):
         if not fresh and groups is not None:
             self._no_life = set()
             return []                             # read moments ago (very short part): nothing new
+        return self._life_groups()
+
+    def _life_groups(self) -> list:
+        self._life_fresh = False
         out = []
         for t, v in self._tool_life.items():
             try:
@@ -530,6 +535,15 @@ class HeidenhainLsv2Driver(Driver):
                 continue
             out.append(_life_group(tn, v["time1"], v["time2"], v["cur_time"], v.get("locked")))
         return out
+
+    def fresh_tool_life(self):
+        """Life from a table read the collector did not ask for - mainly the read at the start of a part after a
+        setup, where swapped tools / a CUR_TIME set back to 0 are seen first. Handed over once (no extra read on
+        the control), so the card shows the new life from the start of that part instead of after it.
+        None when there is nothing new."""
+        if not getattr(self, "_life_fresh", False) or getattr(self, "_itnc", False):
+            return None
+        return self._life_groups()
 
     def read_alarms(self):
         """Active messages for the detail view: the NC error list (iTNC 530 only) + PLC messages from the

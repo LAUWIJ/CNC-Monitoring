@@ -141,3 +141,31 @@ def test_tool_life_used_up_while_standing_still_is_waiting_for_operator(tmp_path
     s2 = Sample(ts=1100.0, exec_state=ExecState.IDLE, mode=Mode.AUTO)
     w.tool_life_wait(s2)
     assert s2.exec_state == ExecState.IDLE
+
+
+def test_heidenhain_life_read_at_part_start_is_stored_right_away(tmp_path):
+    """Tool swapped (CUR_TIME back to 0) while the life was used up: the tool table read at the start of the next
+    part is stored as the part starts, so the card no longer says 'used up' for that whole first part."""
+    from machine_monitor.collector import MachineWorker
+    from machine_monitor.drivers.heidenhain_lsv2 import HeidenhainLsv2Driver, _life_group
+    from machine_monitor.model import ExecState, Mode, Sample
+    st = Store(str(tmp_path / "m.db"))
+    w = MachineWorker({"id": "m2", "name": "DVF Erowa", "control": "simulator"}, {}, st)
+    st.add_tool_life("m2", 100.0, _life_group(5, 60, 55, 61.0, False))          # used up before the swap
+    assert st.tool_life_now("m2")[-5]["tools"][0]["status"] == 2
+
+    d = HeidenhainLsv2Driver.__new__(HeidenhainLsv2Driver)                      # no connection needed
+    d._tool_life = {"5": {"time1": 60, "time2": 55, "cur_time": 0.0, "locked": False}}
+    d._life_fresh, d._no_life = True, set()
+    w.driver = d
+    w.handle(Sample(ts=200.0, online=True, exec_state=ExecState.IDLE, mode=Mode.AUTO, main_program="P.h"))
+    # the read flagged as fresh is handed over once, at the next sample
+    r = st.tool_life_now("m2")[-5]
+    assert r["tools"][0]["status"] == 1 and r["count"] == 0.0
+    assert d.fresh_tool_life() is None
+
+    d._tool_life["5"]["cur_time"] = 2.0                                          # read as a part starts
+    d._life_fresh = True
+    w.handle(Sample(ts=300.0, online=True, exec_state=ExecState.RUNNING, mode=Mode.AUTO, main_program="P.h"))
+    r = st.tool_life_now("m2")[-5]
+    assert r["count"] == 2.0 and w.engine.cycle is not None and r["ts"] == w.engine.cycle.start_ts

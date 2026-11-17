@@ -441,6 +441,12 @@ add a test with the observed pattern first.
   tools whose TIME1/TIME2 read as 0); the collector stores an empty row (life 0 -> left None) for each one it
   still has as monitored, so the card/detail view drop it. Before 2026-11-16 such a tool kept its last value.
 
+- HEIDENHAIN, tools swapped after the life ran out (2026-11-17): the tool.t read at the start of a part after a
+  setup used to refresh only the driver's cache - the card kept "used up" for that whole first part. Now
+  `_read_tool_table` flags `_life_fresh`; `MachineWorker.handle` takes `driver.fresh_tool_life()` once and
+  stores it, dated at the part's start (when read within 30 s of it) so the part's running time is counted on top.
+  No extra reads on the control.
+
 ## 5d2. Warm-up programs (Nov 2026)
 
 - `warmup_programs = [regex, ...]` per machine (Settings: "Warm-up programs", plain names -> patterns like the
@@ -448,6 +454,20 @@ add a test with the observed pattern first.
   RUNNING: no cycle is opened, a part-counter rise in it is ignored (no open cycle), and its time is not cycle
   run time or tool time. Own colour `--warmup` (#0fa5a0, checked against running/setup for colour-blind and
   normal vision). MDI/manual stays SETUP; pause/alarm during warm-up stay PAUSED/ALARM.
+
+## 5d5. Open parts across a restart of the monitor (2026-11-17)
+- Before: a deploy (systemd restart, ~30 s gap) marked every running part PARTIAL and LOST parts that were open
+  at the stop (Python died on SIGTERM without saving anything).
+- Now `run.py` turns SIGTERM into KeyboardInterrupt -> workers stopped and joined (15 s) -> `save_handover` writes
+  `CycleEngine.export_open()` per machine to `data/handover.json` (not in demo mode). At start `load_handover`
+  (file deleted after reading) -> `MachineWorker.take_over` -> `CycleEngine.take_over(h, max_wall_s)`;
+  max_wall_s = 0.9 x usual start-to-start time (store.typical pitch_s), else 1.1 x typical cycle.
+- Engine `_apply_handover` at the first ONLINE sample: continue the saved Cycle (same start, not partial, gap
+  added to the saved state's bucket and to the tool if it is the same tool) only if gap <= 180 s, same main
+  program running in AUTO, no part/end counter rose (and no pending counted part), and now - start <= max_wall_s.
+  Else the saved part is closed PARTIAL, end = save time, reason MONITOR_RESTART, parts 1 (0 when a counter is
+  known and did not rise). Gap > 180 s: dropped, as before.
+- Settings page: `Runtime.reload` passes the stopped worker's open part to the new worker the same way.
 
 ## 5e. Settings page (Nov 2026)
 
