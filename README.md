@@ -94,6 +94,11 @@ The program name the control is executing right now is **not** used to split cyc
 - **Counter before the program end** (e.g. Lynx: counted, then the door opens, then M30): the cycle stays open until the program really ends, so the part is one cycle. If the program keeps running for `counter_end_window_s` (30 s) after the count - an **M99 loop / bar feeder** - the cycle is split exactly at the counter moment and a new one continues. History from before this fix: `python run.py --merge-split-cycles` (`fix_history_pi.bat`).
 - **Warm-up programs**: per machine (Settings page, or `warmup_programs = ['^O?9000$']` in `config.toml`).
   While one runs in automatic mode the timeline shows *Warm-up*: no cycle, no part, not counted as running time.
+- **Alarms that mean "waiting for the operator"**: some machines keep reporting the program running while they wait
+  for an answer (e.g. a HEIDENHAIN PLC message `PLC 215 Correct tool in spindle ?`). List those per machine
+  (Settings page, or `operator_alarms = ["PLC 215"]`): whole words, any case, matched against the alarm's number and
+  text. While one is active the machine shows *Waiting for operator* with the message; inside a part that time is
+  waiting, not machining time. Other alarms stay display only.
 - **Waiting for robot / operator**: per machine (Settings page, or `[[machine.wait]]` in `config.toml`), rules mark program names (e.g. a robot handshake macro `O9022` or a robot load program `LOAD_PRODUCT_0.H`) as waiting. The timeline shows *Waiting for robot* and *Waiting for operator* separately; that time is never counted in the cycle time (`action = "end"`: the part is done when the wait starts, `"pause"`: wait inside the cycle). The cycle log shows the waiting time and the time spent per sub-program/macro.
 - **Pallet machines (Siemens)**: `[machine.cycle_signal] block_regex = '\bM0?60\b'` ends the cycle at the M60 block and shows the clearance wait as *Waiting for operator*.
 - **Partial cycles**: a part that was already running when the monitor started or reconnected is logged as **Partial**: it counts as a part, but not for cycle-time statistics. `--merge-split-cycles` (`fix_history_pi.bat`) also marks such cycles in older history.

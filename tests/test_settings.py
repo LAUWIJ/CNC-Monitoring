@@ -176,3 +176,16 @@ def test_warmup_programs_field(tmp_path):
     svc.save({"id": "m2", "control": "heidenhain", "values": {"name": "DVF", "host": "192.168.1.22",
               "warmup_programs": ""}, "wait": []})
     assert "warmup_programs" not in tomllib.loads(cfg.read_text())["machine"][1]
+
+
+def test_operator_alarms_saved_as_lines(tmp_path):
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(CFG, encoding="utf-8")
+    svc = SettingsService(str(cfg), str(tmp_path / "data"), None)
+    svc.save({"id": "m1", "control": "fanuc", "values": {"operator_alarms": 'PLC 215\n  Correct tool in  spindle ? \n\n"x"'}})
+    m1 = tomllib.loads(cfg.read_text())["machine"][0]
+    assert m1["operator_alarms"] == ["PLC 215", "Correct tool in spindle ?", '"x"']
+    ui = svc.machines()["machines"][0]["values"]["operator_alarms"]
+    assert ui == 'PLC 215\nCorrect tool in spindle ?\n"x"'
+    svc.save({"id": "m1", "control": "fanuc", "values": {"operator_alarms": ""}})
+    assert "operator_alarms" not in tomllib.loads(cfg.read_text())["machine"][0]

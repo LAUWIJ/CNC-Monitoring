@@ -199,9 +199,10 @@ main { padding: 20px 24px 40px; display: grid; gap: 20px; }
 #setDlg::backdrop { background: rgba(0,0,0,.35); }
 .sethd { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 8px; }
 .sethd h2 { margin: 0; }
-#setDlg input[type=text], #setDlg input[type=password], #setDlg input[type=number], #setDlg select {
+#setDlg input[type=text], #setDlg input[type=password], #setDlg input[type=number], #setDlg select, #setDlg textarea {
   font: inherit; padding: 5px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); }
-#setDlg input[type=text], #setDlg input[type=password], #setDlg input[type=number] { width: 100%; }
+#setDlg input[type=text], #setDlg input[type=password], #setDlg input[type=number], #setDlg textarea { width: 100%; }
+#setDlg textarea { resize: vertical; box-sizing: border-box; }
 .sgrid { display: grid; grid-template-columns: 210px minmax(0, 1fr); gap: 8px 14px; align-items: start; margin: 12px 0; }
 .sgrid > label { padding-top: 6px; font-size: 13px; color: var(--text2); }
 .sgrid .shelp { color: var(--muted); font-size: 12px; margin-top: 3px; }
@@ -1747,6 +1748,7 @@ function fieldHtml(f, m) {
   else if (f.type === "select") inp = `<select id="${id}">${f.options.map(([k, l]) => `<option value="${esc(k)}" ${String(val) === k ? "selected" : ""}>${esc(l)}</option>`).join("")}</select>`;
   else if (f.type === "password") inp = `<input type="password" id="${id}" autocomplete="new-password" placeholder="${v && v.set ? "(unchanged - type to replace)" : ""}">` +
     (v && v.set ? `<label class="shelp"><input type="checkbox" id="${id}_clear"> remove the stored password</label>` : "");
+  else if (f.type === "lines") inp = `<textarea id="${id}" rows="3" spellcheck="false" placeholder="e.g. PLC 215">${esc(val)}</textarea>`;
   else if (f.type === "int") inp = `<input type="number" id="${id}" value="${esc(val)}" placeholder="${f.key === "port" ? esc((SET.data.controls.find((c) => c.id === m.control) || {}).port || "") : ""}">`;
   else inp = `<input type="text" id="${id}" value="${esc(val === false ? "false" : val)}">`;
   const help = (f.help_for || {})[m.control] || f.help;
@@ -1780,7 +1782,8 @@ function showEdit(m) {
   const fields = SET.data.fields.filter((f) => !f.controls || f.controls.includes(m.control));
   const main = fields.filter((f) => ["name", "host", "port", "enabled", "username", "password", "security"].includes(f.key));
   const warm = fields.filter((f) => f.key === "warmup_programs");
-  const more = fields.filter((f) => !main.includes(f) && !warm.includes(f));
+  const opal = fields.filter((f) => f.key === "operator_alarms");
+  const more = fields.filter((f) => !main.includes(f) && !warm.includes(f) && !opal.includes(f));
   setBody.innerHTML = `<div class="sgrid">
       <label for="sId">ID</label><div>${m.isNew ? `<input type="text" id="sId" value="${esc(m.id)}"><div class="shelp">Short and fixed - the history is stored under it (e.g. m14)</div>` : `<div class="chk"><b>${esc(m.id)}</b></div>`}</div>
       <label for="sCtl">Control</label><div><select id="sCtl">${SET.data.controls.map((c) => `<option value="${esc(c.id)}" ${c.id === m.control ? "selected" : ""}>${esc(c.label)}</option>`).join("")}
@@ -1792,6 +1795,7 @@ function showEdit(m) {
       handshake macro). <b>End</b>: the part is done when the wait starts (a load program between parts).</p>
     <div id="sWait">${m.wait.map(waitRow).join("")}</div>
     <button type="button" class="btn sec" id="sWaitAdd">+ Add wait rule</button>
+    <div class="sgrid" style="margin-top:10px">${opal.map((f) => fieldHtml(f, m)).join("")}</div>
     <div class="ssec">Warm-up</div>
     <div class="sgrid">${warm.map((f) => fieldHtml(f, m)).join("")}</div>
     <div class="ssec">More</div>

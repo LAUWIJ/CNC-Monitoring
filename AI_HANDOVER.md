@@ -469,6 +469,14 @@ add a test with the observed pattern first.
   known and did not rise). Gap > 180 s: dropped, as before.
 - Settings page: `Runtime.reload` passes the stopped worker's open part to the new worker the same way.
 
+## 5d6. Alarms that mean "waiting for operator" (2026-11-17)
+- DVF Erowa (TNC 640): `PLC 215 Correct tool in spindle ?` - the program stays "running" while the control waits for
+  the operator. Generic per-machine setting `operator_alarms` (list; settings page type "lines", one per line).
+- `MachineWorker.alarm_wait` (live samples, after tool_life_wait): an open alarm (`_alarm_open`, refreshed every
+  alarm_poll_s) whose "code text" matches an entry as whole words, any case -> sample WAITING / operator,
+  `extra.waiting_for` = the message. The engine keeps the part open and counts the time as wait_s. Other alarms
+  remain display only. Shop-specific choice lives in config, the mechanism is generic.
+
 ## 5e. Settings page (Nov 2026)
 
 - ⚙ Settings in the header: admin password (first visit sets it; `reset_admin_pi.bat` /

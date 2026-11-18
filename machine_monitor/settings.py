@@ -65,6 +65,10 @@ FIELDS = [
      "options": [["off", "Off"], ["read", "Browse + fetch"], ["send", "Browse + fetch + send"]],
      "help": "FANUC is off unless switched on here"},
     {"key": "alarms", "label": "Read alarms & messages", "type": "bool", "default": True},
+    {"key": "operator_alarms", "label": "Alarms = waiting for operator", "type": "lines",
+     "help": "One per line: the alarm's number or part of its text as the dashboard shows it (whole words, any "
+             "case), e.g. PLC 215 or Correct tool in spindle. While such an alarm is active the machine shows Waiting for operator, also "
+             "when the control still reports the program running; inside a part that time is not machining time."},
     {"key": "warmup_programs", "label": "Warm-up programs", "type": "programs",
      "help": "Comma-separated, e.g. 9000, WARMUP.H. While one runs in automatic mode the machine shows "
              "Warm-up: no part, no cycle, not counted as machining time."},
@@ -184,6 +188,9 @@ class SettingsService:
                 elif f["type"] == "programs":
                     v = m.get(k) or []
                     vals[k] = ", ".join(pattern_to_name(p) for p in ([v] if isinstance(v, str) else v))
+                elif f["type"] == "lines":
+                    v = m.get(k) or []
+                    vals[k] = "\n".join(str(x) for x in ([v] if isinstance(v, str) else v))
                 elif k in m:
                     vals[k] = m[k]
                 else:
@@ -214,6 +221,17 @@ class SettingsService:
                     new.pop(k, None)
                 elif isinstance(v, str) and v:
                     new[k] = v
+                continue
+            if t == "lines":
+                lines = [" ".join(x.split()) for x in str(v or "").splitlines() if x.strip()]
+                old = cur.get(k)
+                old = [old] if isinstance(old, str) else list(old or [])
+                if lines == old:
+                    continue
+                if lines:
+                    new[k] = lines
+                else:
+                    new.pop(k, None)
                 continue
             if t == "programs":
                 names = [x.strip() for x in str(v or "").split(",") if x.strip()]

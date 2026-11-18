@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import threading
 import time
 
@@ -51,7 +52,12 @@ class MachineWorker(threading.Thread):
         self.connected = False
         self._last_live = 0.0
         self.last_error = None
-        # alarms: display only - read every alarm_poll_s, stored in their own table, never fed to the engine
+        # alarms: read every alarm_poll_s and stored in their own table. Only alarms the site lists in
+        # operator_alarms change the state (see alarm_wait); all others are display only.
+        # whole words, any case: "PLC 215" matches "PLC 215 Correct tool in spindle ?", not "PLC 2150"
+        self.operator_alarms = [re.compile(r"(?<!\w)" + re.escape(" ".join(str(x).split())) + r"(?!\w)", re.I)
+                                for x in ([mcfg["operator_alarms"]] if isinstance(mcfg.get("operator_alarms"), str)
+                                          else mcfg.get("operator_alarms") or []) if str(x).strip()]
         self.read_alarms = bool(mcfg.get("alarms", defaults.get("alarms", True)))
         self.alarm_poll = float(mcfg.get("alarm_poll_s", defaults.get("alarm_poll_s", 5.0)))
         self._alarm_next = 0.0
@@ -93,12 +99,26 @@ class MachineWorker(threading.Thread):
             s.exec_state, s.wait_reason = ExecState.WAITING, "operator"
             s.extra = {**(s.extra or {}), "waiting_for": "tool change - tool life used up"}
 
+    def alarm_wait(self, s: Sample) -> None:
+        """An active alarm the site listed in operator_alarms (e.g. HEIDENHAIN 'PLC 215 Correct tool in spindle ?'
+        on a TNC whose program keeps "running" while it waits for that answer): the machine is waiting for the
+        operator. The part stays open; the time counts as waiting, not as machining time."""
+        if not self.operator_alarms or not s.online or s.exec_state == ExecState.WAITING or not self._alarm_open:
+            return
+        for code, text in self._alarm_open:
+            full = " ".join(f"{code} {text}".split())
+            if any(p.search(full) for p in self.operator_alarms):
+                s.exec_state, s.wait_reason = ExecState.WAITING, "operator"
+                s.extra = {**(s.extra or {}), "waiting_for": full}
+                return
+
     def handle(self, s: Sample, live: bool = True):
         if live:
             if self._tool_reread and s.ts >= self._tool_reread[0]:
                 tools, self._tool_reread = self._tool_reread[1], None
                 self.read_tool_life(tools, s.ts)
             self.tool_life_wait(s)
+            self.alarm_wait(s)
         for ev in self.engine.update(s):
             if isinstance(ev, StateChange):
                 self.store.add_state(self.id, ev.state.value, ev.start_ts, ev.program)
