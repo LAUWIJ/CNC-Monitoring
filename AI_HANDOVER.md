@@ -477,6 +477,27 @@ add a test with the observed pattern first.
   `extra.waiting_for` = the message. The engine keeps the part open and counts the time as wait_s. Other alarms
   remain display only. Shop-specific choice lives in config, the mechanism is generic.
 
+## 5d7. Default folder on the control + the server's program folder (2026-11-23)
+- Per machine `transfer_folder` (Settings "Default folder on the control"): `TransferService.roots` puts it first
+  with default + configured (an existing drive with that path moves to the front; otherwise a "Default folder"
+  button, note = last folder name). Separator added by `_folder` (HEIDENHAIN "\\", others "/"). Without it the old
+  behaviour: the selected program's folder gets the default mark where it is.
+- Per machine `program_source` (e.g. `N:\\Programma's DVF5000-BMO`): `source_list` (read only, scandir, newest
+  first, max 2000, no "..", hidden/~$ files skipped) and `start_send_source` (copy to transfer_tmp, then the normal
+  `start_send` - PIN, protected, in use, exists/replace with backup). Web: GET /api/transfer/source, POST
+  /api/transfer/send-source. UI: "From the server" box under the drop zone, Send → per file to the open folder.
+- `local_path`: Windows as typed; Linux `[transfer] drives` map, else a drive letter -> /mnt/<letter>.
+  `pi/mount_share.sh` (via mount_share_pi.bat): cifs, ro, credentials in /etc/cnc-monitor/<letter>.cred (600),
+  fstab with nofail,_netdev,x-systemd.automount. Not tested against the real share yet.
+
+- iTNC 530 (VC-630, 2026-11-23): sending a program failed "control refused ... (104 T_BD_BAD_BLOCK)" - the control
+  checks each line while receiving; the same file worked with TNCremo, CR LF files worked on the TNC 640s.
+  pyLSV2 (checked in its source, 2026-10 master): receive_file turns the control's NUL line ends into CR LF, but
+  send_file sends the file's bytes unchanged in fixed-size telegrams. So text programs are now sent in the
+  control's own format: `HeidenhainFiles.text_for_tnc` writes every line ending with NUL (no CR/LF). A program
+  fetched back shows the iTNC 530 rebuilds each line (keywords in its own language, its own spacing).
+  A first attempt (LF only) was wrong. Verified 2026-11-23: sends fine to the VC-630 (iTNC 530) and a TNC 640.
+
 ## 5e. Settings page (Nov 2026)
 
 - ⚙ Settings in the header: admin password (first visit sets it; `reset_admin_pi.bat` /

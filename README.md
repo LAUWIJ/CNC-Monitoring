@@ -124,6 +124,21 @@ running.
   dashboard version wins and the deploy says so.
 - `[defaults]`, `[server]` and `[transfer]` (PIN, backups) are still edited in `config.toml` (restart needed).
 
+### Programs: default folder and the server's program folder
+Per machine, in Settings (machines with program transfer):
+- **Default folder on the control** - opened first in *Programs*, as its folder line shows it, e.g.
+  `TNC:\nc_prog\BMO\` or `//CNC_MEM/USER/PATH1/`. Empty = where the selected program is.
+- **Program folder on the server** - where this machine's programs wait to be sent, e.g.
+  `N:\Programma's DVF5000-BMO`. *Programs* then lists that folder (newest first, filter, sub-folders) with a
+  **Send →** button per file: it goes to the folder open on the left, with the same PIN, protected/in-use checks
+  and backup of a replaced program as an uploaded file. The server's files are only read.
+  - Monitor on a **Windows PC**: `N:\...` works as it is (the monitor runs as the logged-in user).
+  - Monitor on a **Raspberry Pi**: run `mount_share_pi.bat` once per drive letter. It asks the share path
+    (`\\SERVER\share`, what `net use` shows for N:), a user and the password, mounts it **read-only** at
+    `/mnt/n` and keeps it mounted after a reboot. The password is stored only on the Pi, in a root-only file.
+    `N:\...` then maps to `/mnt/n/...` by itself; another place can be set with
+    `[transfer] drives = { "N:" = "/media/programs" }`.
+
 ## Alarms & messages (machine detail view)
 
 Click a machine: below the status and parts charts, **Alarms & messages** shows what is active on the control right now, how often each alarm occurred in the selected period and for how long, and a list of every occurrence. This is **for information only** - alarms never change the machine state or the cycles.

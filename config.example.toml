@@ -44,6 +44,9 @@ subprogram_patterns = [
 #                                    Tool (e.g. 0i-D): adds "Memory card" (list/fetch/send/replace) and never
 #                                    opens CF_TEXT as a folder - that crashed a 0i-D. Not needed for //MEMCARD/.
 #                transfer_protect = ['^O[89]\d{3}$']   programs that are never replaced (FANUC default: O8xxx/O9xxx)
+#                transfer_folder = 'TNC:\nc_prog\BMO\'   opened first in Programs
+#                program_source = "N:\\Programma's DVF5000-BMO"   the server's folder with this machine's programs
+#                (Raspberry Pi: mount the share once with mount_share_pi.bat; N:\ -> /mnt/n)
 # Always: the selected/running program is never replaced, a replaced program is first copied to
 # data/transfer_backup/<id>/ (limited, see below), every transfer is in the History tab.
 # FANUC: CNC memory + memory card (the card is used for DNC operation from the card).
@@ -56,6 +59,7 @@ backup = true         # false = no backup at all
 backup_keep = 3       # versions kept per program
 backup_days = 30      # older backups are deleted
 backup_max_mb = 200   # all machines together; the oldest go first
+# drives = { "N:" = "/mnt/n" }   # where a drive letter in program_source is on the Pi (default /mnt/<letter>)
 
 # ---------------------------------------------------------------- Siemens
 [[machine]]

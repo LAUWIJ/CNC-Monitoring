@@ -639,13 +639,38 @@ class HeidenhainFiles(FileSession):
             raise TransferError(f"control refused to send {path} ({_lsv2_err(self.con)})")
         return os.path.getsize(local)
 
+    @staticmethod
+    def text_for_tnc(local: str) -> str:
+        """An NC text program in the control's own transfer format: every line ends with a NUL byte.
+        That is how the control sends text (pyLSV2's receive_file turns each NUL into CR LF), but pyLSV2's
+        send_file sends the file's bytes unchanged. A TNC 640 accepts CR LF anyway; an iTNC 530 rejects the
+        program while receiving it: 104 T_BD_BAD_BLOCK (VC-630, 2026-11-23 - the same file went fine with
+        TNCremo). Returns the path of the converted copy (the caller removes it)."""
+        with open(local, "rb") as f:
+            data = f.read()
+        lines = data.replace(b"\r\n", b"\n").replace(b"\r", b"\n").split(b"\n")
+        if lines and lines[-1] == b"":
+            lines.pop()                                   # the file's last line end
+        out = local + ".tnc"
+        with open(out, "wb") as f:
+            f.write(b"".join(ln.replace(b"\x00", b"") + b"\x00" for ln in lines))
+        return out
+
     def send(self, local, folder, name, progress=None):
         remote = join(folder if folder.endswith("\\") else folder + "\\", name)
+        binary = self._binary(name)
+        src = local if binary else self.text_for_tnc(local)
         try:
-            ok = self.con.send_file(local_path=local, remote_path=remote, override_file=True,
-                                    binary_mode=self._binary(name))
-        except TypeError:
-            ok = self.con.send_file(local, remote, True, self._binary(name))
+            try:
+                ok = self.con.send_file(local_path=src, remote_path=remote, override_file=True, binary_mode=binary)
+            except TypeError:
+                ok = self.con.send_file(src, remote, True, binary)
+        finally:
+            if src != local:
+                try:
+                    os.remove(src)
+                except OSError:
+                    pass
         if not ok:
             raise TransferError(f"control refused {remote} ({_lsv2_err(self.con)})")
 
@@ -656,8 +681,18 @@ class HeidenhainFiles(FileSession):
 
 
 def _lsv2_err(con):
+    """The control's error as number + pyLSV2's name for it, e.g. '104 T_BD_BAD_BLOCK'."""
     e = getattr(con, "last_error", None)
-    return str(getattr(e, "e_code", e)) if e is not None else "no detail"
+    if e is None:
+        return "no detail"
+    code = getattr(e, "e_code", e)
+    name = ""
+    try:
+        from pyLSV2.const import LSV2StatusCode
+        name = LSV2StatusCode(int(code)).name
+    except Exception:
+        pass
+    return f"{code} {name}".strip()
 
 
 # ----------------------------------------------------------------------------------------- SIEMENS
@@ -1212,7 +1247,8 @@ class TransferService:
         if not m or not self.supported(m):
             return {"supported": False}
         return {"supported": True, "send": self.can_send(m), "pin": bool(self.pin),
-                "max_mb": round(self.max_bytes / 1048576), "control": m.get("control")}
+                "max_mb": round(self.max_bytes / 1048576), "control": m.get("control"),
+                "source": str(m.get("program_source") or "").strip() or None}
 
     def _live(self, mid) -> dict:
         try:
@@ -1244,6 +1280,15 @@ class TransferService:
             return None
         return p[: p.rfind(sep) + 1]
 
+    @staticmethod
+    def _folder(control, path) -> str:
+        """A folder as typed in the settings, ending with the control's separator."""
+        p = str(path or "").strip()
+        if not p:
+            return ""
+        sep = "\\" if (control == "heidenhain" or ("\\" in p and "/" not in p)) else "/"
+        return p if p.endswith(sep) else p + sep
+
     def roots(self, mid):
         m = self._m(mid)
         lk = self._lock(mid)
@@ -1253,18 +1298,106 @@ class TransferService:
         finally:
             lk.release()
         roots = self._remember_roots(mid, roots)
-        # open where the selected program lives: an existing location gets the default mark, a deeper folder
-        # becomes its own "Program folder" button (the TNC's own nc_prog shortcut is then left out)
-        folder = self.program_folder(m.get("control") if m.get("control") != "simulator" else m.get("flavor"),
-                                     self._live(mid).get("program_path"))
-        if folder:
-            same = [r for r in roots if r["path"].lower() == folder.lower()]
+        control = m.get("control") if m.get("control") != "simulator" else m.get("flavor")
+        # 1. the machine's default folder (Settings: "Default folder on the control") opens first;
+        # 2. else where the selected program lives: an existing location gets the default mark, a deeper folder
+        #    becomes its own "Program folder" button (the TNC's own nc_prog shortcut is then left out)
+        extra = []
+        want = self._folder(control, m.get("transfer_folder"))
+        if want:
+            extra.append((want, "Default folder"))
+        folder = self.program_folder(control, self._live(mid).get("program_path"))
+        if folder and folder.lower() != want.lower():
+            extra.append((folder, "Program folder"))
+        first = True
+        at = 0
+        for path, label in extra:
+            same = [r for r in roots if r["path"].lower() == path.lower()]
+            if same and label == "Program folder":
+                same[0]["default"] = first          # an existing location keeps its place
+                first = False
+                continue
             if same:
-                same[0]["default"] = True
+                r = same[0]
+                roots.remove(r)
             else:
-                roots = [r for r in roots if not (m.get("control") == "heidenhain" and r["path"].lower() == "tnc:\\nc_prog\\")]
-                roots.insert(0, {"path": folder, "label": "Program folder", "note": "", "default": True})
+                if label == "Program folder" and not want:
+                    roots = [r for r in roots
+                             if not (m.get("control") == "heidenhain" and r["path"].lower() == "tnc:\\nc_prog\\")]
+                tail = [x for x in path.replace("\\", "/").split("/") if x]
+                r = {"path": path, "label": label, "note": tail[-1] if tail and label == "Default folder" else "",
+                     "available": True}
+            r["default"] = first
+            if label == "Default folder":
+                r["configured"] = True
+            roots.insert(at, r)
+            at += 1
+            first = False
         return roots
+
+    # ------------------------------------------------- the machine's program folder on the server
+    def local_path(self, p: str) -> str:
+        """A folder as typed in the settings (N:\\Programma's DVF5000-BMO) as the monitor reaches it. On Windows
+        as it is; on the Pi a drive letter is a share mounted read-only at /mnt/<letter> (mount_share_pi.bat),
+        or elsewhere with [transfer] drives = { "N:" = "/media/programs" }."""
+        p = str(p or "").strip()
+        if os.name == "nt":
+            return p
+        q = p.replace("\\", "/")
+        for k, v in (self.settings.get("drives") or {}).items():
+            k2 = str(k).replace("\\", "/").rstrip("/")
+            if q.lower() == k2.lower() or q.lower().startswith(k2.lower() + "/"):
+                return str(v).rstrip("/") + q[len(k2):]
+        m = re.match(r"^([A-Za-z]):(/|$)", q)           # default: N:\... -> /mnt/n/... (mount_share_pi.bat)
+        if m:
+            return f"/mnt/{m.group(1).lower()}" + q[2:]
+        return q
+
+    def _source(self, m, sub: str = "") -> tuple:
+        shown = str(m.get("program_source") or "").strip()
+        if not shown:
+            raise ValueError("no program folder on the server is set for this machine (Settings)")
+        parts = [x for x in str(sub or "").replace("\\", "/").split("/") if x]
+        if any(x in (".", "..") or ":" in x for x in parts):
+            raise ValueError("not a folder inside the program folder")
+        base = self.local_path(shown)
+        sep = "\\" if "\\" in shown else "/"
+        return os.path.join(base, *parts), shown.rstrip("\\/") + "".join(sep + x for x in parts)
+
+    def source_list(self, mid, sub: str = "") -> dict:
+        """Files in the machine's program folder on the server (read only), newest first."""
+        m = self._m(mid)
+        path, shown = self._source(m, sub)
+        if not os.path.isdir(path):
+            hint = "" if os.name == "nt" else " - is the share mounted on the monitor? (mount_share_pi.bat)"
+            raise TransferError(f"{shown} cannot be reached from the monitor{hint}")
+        items = []
+        with os.scandir(path) as it:
+            for e in it:
+                if e.name.startswith((".", "~$")) or e.name.lower() in ("thumbs.db", "desktop.ini"):
+                    continue
+                try:
+                    st = e.stat()
+                    d = e.is_dir()
+                except OSError:
+                    continue
+                items.append({"name": e.name, "dir": d, "size": None if d else st.st_size, "mtime": st.st_mtime})
+        items.sort(key=lambda x: (not x["dir"], -x["mtime"] if not x["dir"] else 0, x["name"].upper()))
+        return {"folder": shown, "sub": "/".join(x for x in str(sub or "").replace("\\", "/").split("/") if x),
+                "items": items[:2000], "more": max(0, len(items) - 2000)}
+
+    def start_send_source(self, mid, folder, src, overwrite=False, pin="", client=""):
+        """Send a file from the machine's program folder on the server: copied to the monitor, then sent
+        exactly like an uploaded file (PIN, protected / in-use checks, backup of a replaced program)."""
+        m = self._m(mid)
+        path, shown = self._source(m, src)
+        if not os.path.isfile(path):
+            raise ValueError(f"{shown} is not a file in the program folder")
+        if os.path.getsize(path) > self.max_bytes:
+            raise ValueError(f"file is larger than {self.max_bytes // 1048576} MB")
+        tmp = self.new_upload_path()
+        shutil.copyfile(path, tmp)
+        return self.start_send(mid, folder, os.path.basename(path), tmp, overwrite, pin, client)
 
     def _remember_roots(self, mid, roots):
         """Drives can come and go (a memory card that is inserted later, a drive that is busy while the machine

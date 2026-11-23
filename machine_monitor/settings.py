@@ -64,6 +64,14 @@ FIELDS = [
     {"key": "transfer", "label": "Program transfer", "type": "select", "controls": list(TRANSFER_CONTROLS),
      "options": [["off", "Off"], ["read", "Browse + fetch"], ["send", "Browse + fetch + send"]],
      "help": "FANUC is off unless switched on here"},
+    {"key": "transfer_folder", "label": "Default folder on the control", "type": "text",
+     "controls": list(TRANSFER_CONTROLS),
+     "help": "Opened first in Programs, as the folder line there shows it - e.g. TNC:\\nc_prog\\BMO\\ or "
+             "//CNC_MEM/USER/PATH1/. Empty = where the selected program is."},
+    {"key": "program_source", "label": "Program folder on the server", "type": "text",
+     "controls": list(TRANSFER_CONTROLS),
+     "help": "Where this machine's programs wait to be sent, e.g. N:\\Programma's DVF5000-BMO. Shown in Programs "
+             "to send with one click. On a Raspberry Pi the share must be mounted (mount_share_pi.bat)."},
     {"key": "alarms", "label": "Read alarms & messages", "type": "bool", "default": True},
     {"key": "operator_alarms", "label": "Alarms = waiting for operator", "type": "lines",
      "help": "One per line: the alarm's number or part of its text as the dashboard shows it (whole words, any "

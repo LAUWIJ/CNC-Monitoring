@@ -174,6 +174,8 @@ def make_handler(store: Store, plc_jobs=None, transfers=None, about=None, settin
                 return self._json(transfers.roots(mid))
             if path == "/api/transfer/list":
                 return self._json(transfers.list(mid, q.get("path", "")))
+            if path == "/api/transfer/source":
+                return self._json(transfers.source_list(mid, q.get("path", "")))
             if path == "/api/transfer/history":
                 return self._json(transfers.history(mid, int(q.get("limit", 30))))
             if path == "/api/transfer/job":
@@ -241,6 +243,12 @@ def make_handler(store: Store, plc_jobs=None, transfers=None, about=None, settin
                         return self._send(400, b'{"error": "not available"}', "application/json")
                     return self._json(transfers.start_fetch(str(body.get("machine", "")), str(body.get("path", "")),
                                                             self.client_address[0]))
+                if u.path == "/api/transfer/send-source":
+                    if not transfers:
+                        return self._send(400, b'{"error": "not available"}', "application/json")
+                    return self._json(transfers.start_send_source(
+                        str(body.get("machine", "")), str(body.get("folder", "")), str(body.get("file", "")),
+                        bool(body.get("overwrite")), self.headers.get("X-Transfer-Pin", ""), self.client_address[0]))
                 if u.path == "/api/transfer/replace":
                     if not transfers:
                         return self._send(400, b'{"error": "not available"}', "application/json")

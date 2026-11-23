@@ -140,7 +140,7 @@ main { padding: 20px 24px 40px; display: grid; gap: 20px; }
 .xtabs button { font: inherit; font-size: 13px; border: 0; background: none; color: var(--muted); padding: 4px 2px; margin-left: 14px;
   cursor: pointer; border-bottom: 2px solid transparent; }
 .xtabs button.on { color: var(--text); border-bottom-color: var(--text); }
-.xroots { flex-wrap: wrap; align-self: flex-start; }
+.xroots { flex-wrap: wrap; align-self: flex-start; margin-bottom: 8px; }
 .xroots button small { color: var(--muted); margin-left: 4px; }
 .xroots button.na { color: var(--muted); font-style: italic; }
 .xroots button.on small { color: inherit; opacity: .7; }
@@ -152,7 +152,8 @@ main { padding: 20px 24px 40px; display: grid; gap: 20px; }
 #xCrumb a:hover { text-decoration: underline; }
 .xib { font: inherit; border: 1px solid var(--border); background: var(--surface); color: var(--text2); border-radius: 6px;
   min-width: 28px; height: 28px; cursor: pointer; }
-.xlist { border: 1px solid var(--grid); border-radius: 10px; padding: 4px; max-height: 340px; overflow: auto; background: var(--bg); }
+.xlist { border: 1px solid var(--grid); border-radius: 10px; padding: 4px; max-height: 330px; overflow: auto; background: var(--bg); }
+.xlist .xrow { min-height: 33px; box-sizing: border-box; }   /* both lists: same row height, at most 10 rows */
 .xrow { display: grid; grid-template-columns: 20px minmax(0, 1fr) 64px 82px; gap: 8px; align-items: center; padding: 6px 8px;
   border-radius: 6px; font-size: 13px; cursor: pointer; }
 .xrow:hover { background: var(--grid); }
@@ -171,11 +172,26 @@ main { padding: 20px 24px 40px; display: grid; gap: 20px; }
   align-items: center; gap: 8px; text-align: center; font-size: 12px; }
 .xdrop.over { border-color: var(--setup); background: color-mix(in srgb, var(--setup) 8%, transparent); }
 .xdrop.off { opacity: .6; }
+.xunder { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px; align-items: stretch; margin-top: 10px; }
+.xunder #xFetch { align-self: start; }
+.xunder .xdrop { flex-direction: row; justify-content: center; padding: 10px 14px; gap: 12px; text-align: left; }
 .xarrow { font-size: 20px; color: var(--setup); line-height: 1; }
 .xjob { font-size: 12px; display: flex; flex-direction: column; gap: 4px; }
 .xjob .pbar { height: 6px; border-radius: 3px; background: var(--grid); overflow: hidden; }
 .xjob .pbar div { height: 100%; background: var(--run-bar); transition: width .3s; }
 .xjob.bad { color: var(--alarm); }
+.xsrclist .xrow { grid-template-columns: minmax(0, 1fr) auto auto auto; gap: 8px; padding: 5px 6px; cursor: default; }
+.xsrclist .xrow .r { min-width: 34px; }
+.xsrclist .xrow .nm { white-space: normal; overflow-wrap: anywhere; line-height: 1.3; }
+.xsrclist .xrow.d { cursor: pointer; }
+.xsrc .xpath input { flex: 1; min-width: 0; font: inherit; font-size: 12px; padding: 4px 8px; border: 1px solid var(--border);
+  border-radius: 6px; background: var(--surface); color: var(--text); }
+.xsend { font: inherit; font-size: 12px; padding: 2px 8px; border: 1px solid var(--setup); color: var(--setup); background: transparent;
+  border-radius: 6px; cursor: pointer; white-space: nowrap; }
+.xsend:disabled { opacity: .4; cursor: default; }
+.xfull b, #xSrcPath { user-select: all; overflow-wrap: anywhere; }
+.xcopy { font: inherit; font-size: 11px; border: 0; background: none; color: var(--text2); cursor: pointer; padding: 0 2px; }
+.xcopy:hover { color: var(--text); }
 .xsmall { font-size: 11px; color: var(--muted); margin-bottom: 4px; }
 .xl { display: grid; grid-template-columns: 14px minmax(0, 1fr) auto; gap: 6px; font-size: 12px; align-items: center; }
 .xl b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
@@ -344,18 +360,30 @@ tr.sel { background: var(--grid); }
       <div class="xroots seg" id="xRoots"></div>
       <div class="xgrid">
         <div class="xleft">
+          <div class="xsmall xfull">On the control: <b id="xPathTxt"></b>
+            <button type="button" class="xcopy" id="xCopy" title="Copy this path (e.g. for Settings: Default folder on the control)" aria-label="Copy path" hidden>⧉</button></div>
           <div class="xpath"><button type="button" class="xib" id="xUp" title="Up one folder" aria-label="Up one folder">‹</button>
             <span id="xCrumb"></span><span class="spacer"></span><span class="updated" id="xRead"></span>
             <button type="button" class="xib" id="xRefresh" title="Read the drives and this folder again" aria-label="Refresh">↻</button></div>
           <div class="xlist" id="xList"><div class="xmsg">Choose a location above.</div></div>
+          <div class="xunder">
+            <button type="button" class="btn" id="xFetch" disabled>↓ Fetch selected to PC</button>
+            <div class="xdrop" id="xDrop">
+              <div class="xarrow">↑</div>
+              <div id="xDropTxt">Drop a file here to send it to the control</div>
+              <button type="button" class="btn" id="xChoose">Choose file…</button>
+              <input type="file" id="xFile" hidden multiple>
+            </div>
+          </div>
         </div>
         <div class="xright">
-          <button type="button" class="btn" id="xFetch" disabled>↓ Fetch selected to PC</button>
-          <div class="xdrop" id="xDrop">
-            <div class="xarrow">↑</div>
-            <div id="xDropTxt">Drop a file here to send it to the control</div>
-            <button type="button" class="btn" id="xChoose">Choose file…</button>
-            <input type="file" id="xFile" hidden multiple>
+          <div class="xsrc" id="xSrc" hidden>
+            <div class="xsmall">From the server: <b id="xSrcPath"></b>
+              <button type="button" class="xcopy" id="xSrcCopy" title="Copy this path (e.g. for Settings: Program folder on the server)" aria-label="Copy path">⧉</button></div>
+            <div class="xpath"><button type="button" class="xib" id="xSrcUp" title="Up one folder" aria-label="Up one folder">‹</button>
+              <input type="search" id="xSrcQ" placeholder="Filter" aria-label="Filter the server's files">
+              <button type="button" class="xib" id="xSrcRefresh" title="Read the folder again" aria-label="Refresh">↻</button></div>
+            <div class="xlist xsrclist" id="xSrcList"></div>
           </div>
           <div id="xJobs"></div>
           <div class="xlast"><div class="xsmall">Last transfers</div><div id="xLast"></div></div>
@@ -749,6 +777,7 @@ function cardMore(m, L, st, inCycle, now) {
 
 // --------------------------------------------------------------- program transfer (single-machine view)
 const X = { mid: null, info: null, roots: [], root: null, path: null, items: [], sel: new Set(), pin: "", tab: "files", readAt: 0, gen: 0 };
+const XS = { sub: "", items: [], gen: 0 };      // the machine's program folder on the server
 const xEnc = encodeURIComponent;
 const xSep = (p) => (p.includes("\\") ? "\\" : "/");
 const xJoin = (folder, name) => folder + (/[\\/]$/.test(folder) ? "" : xSep(folder)) + name;
@@ -788,7 +817,9 @@ async function xferMachine(m) {
   xTab("files");
   xDropState();
   xLast();
+  XS.sub = ""; $("#xSrcQ").value = ""; xSrcLoad();
   $("#xRoots").innerHTML = ""; $("#xCrumb").textContent = ""; $("#xRead").textContent = "";
+  $("#xPathTxt").textContent = ""; $("#xCopy").hidden = true;
   $("#xList").innerHTML = `<div class="xmsg">Connecting to the control …</div>`;
   await xLoadRoots(gen, true);
 }
@@ -807,7 +838,7 @@ async function xLoadRoots(gen, open) {
   if (X.root) X.root = roots.find((r) => r.path === X.root.path) || X.root;
   xDropState();
   $("#xRoots").innerHTML = roots.map((r, i) => `<button type="button" data-i="${i}" class="${r.available === false ? "na" : ""}"
-    title="${esc(r.path)}${r.default ? " - where the selected program is" : ""}${r.available === false ? " - not available on the control right now (seen before)" : ""}">${esc(r.label)}${
+    title="${esc(r.path)}${r.configured ? " - default folder (Settings)" : r.default ? " - where the selected program is" : ""}${r.available === false ? " - not available on the control right now (seen before)" : ""}">${esc(r.label)}${
     r.available === false ? "<small>not available now</small>" : r.note ? `<small>${esc(r.note)}</small>` : ""}</button>`).join("");
   [...$("#xRoots").children].forEach((b) => b.classList.toggle("on", X.roots[+b.dataset.i] === X.root));
   if (!open) return true;
@@ -824,6 +855,7 @@ function xDropState() {
   $("#xDropTxt").innerHTML = na ? "This drive is not available on the control right now - press ↻ when it is back"
     : !can ? 'Sending is switched off for this machine.<br><span class="updated">Turn it on with transfer = "send" in config.toml</span>'
     : X.path ? `<b>Drop files here to send them to ${esc(X.root && X.path === X.root.path ? X.root.label : X.path)}</b>` : "Choose a location first";
+  if (XS.items.length) xSrcRender();        // the Send buttons follow the open folder
 }
 async function xOpen(path, root) {
   if (root) X.root = root;
@@ -851,6 +883,8 @@ function xCrumb() {
   for (const p of parts) { acc = xJoin(acc, p) + xSep(root || "/"); html += ` <span class="updated">›</span> <a href="#" data-p="${esc(acc)}">${esc(p)}</a>`; }
   $("#xCrumb").innerHTML = html;
   $("#xUp").disabled = !parts.length;
+  $("#xPathTxt").textContent = X.path;
+  $("#xCopy").hidden = !X.path;
 }
 function xRenderList() {
   if (!X.items.length) { $("#xList").innerHTML = `<div class="xmsg">This folder is empty.</div>`; return; }
@@ -866,6 +900,23 @@ function xSelUi() {
   $("#xFetch").textContent = `↓ Fetch selected to PC${n ? ` (${n})` : ""}`;
 }
 $("#xRoots").onclick = (e) => { const b = e.target.closest("button"); if (b) xOpen(X.roots[+b.dataset.i].path, X.roots[+b.dataset.i]); };
+// copy a path - the dashboard is plain http on the shop network, where navigator.clipboard is not available
+async function xCopyText(t, btn) {
+  let ok = false;
+  try { if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(t); ok = true; } } catch (e) {}
+  if (!ok) {
+    const ta = document.createElement("textarea");
+    ta.value = t; ta.style.position = "fixed"; ta.style.opacity = "0";
+    document.body.appendChild(ta); ta.select();
+    try { ok = document.execCommand("copy"); } catch (e) {}
+    ta.remove();
+  }
+  const was = btn.textContent;
+  btn.textContent = ok ? "✓ copied" : "select + Ctrl+C";
+  setTimeout(() => (btn.textContent = was), 1500);
+}
+$("#xCopy").onclick = () => xCopyText(X.path, $("#xCopy"));
+$("#xSrcCopy").onclick = () => xCopyText($("#xSrcPath").textContent, $("#xSrcCopy"));
 $("#xCrumb").onclick = (e) => { const a = e.target.closest("a"); if (a) { e.preventDefault(); xOpen(a.dataset.p); } };
 $("#xUp").onclick = () => { const s = xSep(X.path), p = X.path.replace(/[\\/]$/, ""); xOpen(p.slice(0, p.lastIndexOf(s) + 1)); };
 $("#xRefresh").onclick = async () => { await xLoadRoots(X.gen, !X.path); if (X.path) xOpen(X.path); };
@@ -952,41 +1003,44 @@ function xUpload(file, folder, name, ui) {
     xhr.send(file);
   });
 }
+// one file to the open folder; start(ui) hands the file to the monitor and returns its first job state
+async function xSendOne(name, size, folder, start) {
+  const existing = X.items.find((e) => !e.dir && e.name.toUpperCase() === name.toUpperCase());
+  if (existing && ((existing.in_use && !existing.replace_ok) || existing.protected)) {
+    const ui = xJobUi(`↑ ${name}`);
+    ui.set(existing.in_use ? `${name} is ${existing.in_use} on the control - not replaced` : `${name} is protected - not replaced`, 1, true);
+    ui.done(15000); return;
+  }
+  if (X.info.pin && !X.pin) {
+    if (!(await xDialog("Send to the control", `Enter the PIN to send <b>${esc(name)}</b> to ${esc(folder)}.`, "Send", true))) return;
+    X.pin = $("#xPin").value;
+  }
+  const ui = xJobUi(`↑ ${name}`);
+  try {
+    let j = await start(ui);
+    j = await xPoll(j.id, { set: (m, fr) => ui.set(m, 0.3 + 0.7 * (fr || 0)) });
+    if (j.state === "exists") {
+      const ex = j.existing || {};
+      const ok = await xDialog(`Replace ${name}?`,
+        `<p><b>${esc(name)}</b> already exists in ${esc(folder)}${ex.size != null ? ` (${fmtSize(ex.size)}${ex.mtime ? `, ${fmtDay(ex.mtime)}` : ""})` : ""}.</p>
+         <p>The current version is first copied to the monitor (kept as a backup), then replaced by your file${size != null ? ` (${fmtSize(size)})` : ""}.</p>`, "Replace", false);
+      if (!ok) { ui.set("not sent - kept the program on the control", 1); ui.done(); return; }
+      const j2 = await xPost("/replace", { id: j.id });
+      j = await xPoll(j2.id, { set: (m, fr) => ui.set(m, 0.3 + 0.7 * (fr || 0)) });
+    }
+    if (j.state === "done") { ui.set(j.msg, 1); ui.done(); }
+    else { ui.set(j.msg || "failed", 1, true); ui.done(20000); }
+  } catch (e) {
+    if (e.status === 403) X.pin = "";
+    ui.set(e.message, 1, true); ui.done(20000);
+  }
+}
 async function xSendFiles(files) {
   if (!X.info || !X.info.send || !X.path) return;
   const folder = X.path;
   for (const f of files) {
     if (f.size > X.info.max_mb * 1048576) { const ui = xJobUi(`↑ ${f.name}`); ui.set(`larger than ${X.info.max_mb} MB`, 1, true); ui.done(15000); continue; }
-    let name = f.name;
-    const existing = X.items.find((e) => !e.dir && e.name.toUpperCase() === name.toUpperCase());
-    if (existing && ((existing.in_use && !existing.replace_ok) || existing.protected)) {
-      const ui = xJobUi(`↑ ${name}`);
-      ui.set(existing.in_use ? `${name} is ${existing.in_use} on the control - not replaced` : `${name} is protected - not replaced`, 1, true);
-      ui.done(15000); continue;
-    }
-    if (X.info.pin && !X.pin) {
-      if (!(await xDialog("Send to the control", `Enter the PIN to send <b>${esc(name)}</b> to ${esc(folder)}.`, "Send", true))) continue;
-      X.pin = $("#xPin").value;
-    }
-    const ui = xJobUi(`↑ ${name}`);
-    try {
-      let j = await xUpload(f, folder, name, ui);
-      j = await xPoll(j.id, { set: (m, fr) => ui.set(m, 0.3 + 0.7 * (fr || 0)) });
-      if (j.state === "exists") {
-        const ex = j.existing || {};
-        const ok = await xDialog(`Replace ${name}?`,
-          `<p><b>${esc(name)}</b> already exists in ${esc(folder)}${ex.size != null ? ` (${fmtSize(ex.size)}${ex.mtime ? `, ${fmtDay(ex.mtime)}` : ""})` : ""}.</p>
-           <p>The current version is first copied to the monitor (kept as a backup), then replaced by your file (${fmtSize(f.size)}).</p>`, "Replace", false);
-        if (!ok) { ui.set("not sent - kept the program on the control", 1); ui.done(); continue; }
-        const j2 = await xPost("/replace", { id: j.id });
-        j = await xPoll(j2.id, { set: (m, fr) => ui.set(m, 0.3 + 0.7 * (fr || 0)) });
-      }
-      if (j.state === "done") { ui.set(j.msg, 1); ui.done(); }
-      else { ui.set(j.msg || "failed", 1, true); ui.done(20000); }
-    } catch (e) {
-      if (e.status === 403) X.pin = "";
-      ui.set(e.message, 1, true); ui.done(20000);
-    }
+    await xSendOne(f.name, f.size, folder, (ui) => xUpload(f, folder, f.name, ui));
   }
   if (X.mid && X.path === folder) xOpen(folder);
   xLast();
@@ -997,6 +1051,55 @@ const xd = $("#xDrop");
 xd.ondragover = (e) => { e.preventDefault(); if (X.info && X.info.send) xd.classList.add("over"); };
 xd.ondragleave = () => xd.classList.remove("over");
 xd.ondrop = (e) => { e.preventDefault(); xd.classList.remove("over"); xSendFiles([...e.dataTransfer.files]); };
+
+// ---- the machine's program folder on the server (Settings: "Program folder on the server")
+async function xSrcLoad() {
+  const on = !!(X.info && X.info.source);
+  $("#xSrc").hidden = !on;
+  if (!on) return;
+  const gen = ++XS.gen, mid = X.mid;
+  $("#xSrcList").innerHTML = `<div class="xmsg">Reading …</div>`;
+  let r;
+  try { r = await xGet("/source", { path: XS.sub }); }
+  catch (e) { if (gen === XS.gen && mid === X.mid) $("#xSrcList").innerHTML = `<div class="xmsg bad">${esc(e.message)}</div>`; return; }
+  if (gen !== XS.gen || mid !== X.mid) return;
+  XS.items = r.items;
+  $("#xSrcPath").textContent = r.folder;
+  $("#xSrcPath").title = r.folder;
+  $("#xSrcUp").disabled = !XS.sub;
+  xSrcRender();
+}
+function xSrcRender() {
+  const q = $("#xSrcQ").value.trim().toUpperCase();
+  const its = XS.items.map((e, i) => [e, i]).filter(([e]) => !q || e.name.toUpperCase().includes(q));
+  const can = X.info && X.info.send && X.path && !(X.root && X.root.available === false);
+  const to = X.path ? (X.root && X.path === X.root.path ? X.root.label : X.path) : "";
+  $("#xSrcList").innerHTML = !its.length ? `<div class="xmsg">${q ? "Nothing matches the filter." : "This folder is empty."}</div>`
+    : its.slice(0, 300).map(([e, i]) => e.dir
+      ? `<div class="xrow d" data-i="${i}" title="Open folder"><span class="nm">📁 ${esc(e.name)}</span><span></span><span class="r">${fmtDay(e.mtime)}</span><span></span></div>`
+      : `<div class="xrow" data-i="${i}"><span class="nm" title="${esc(e.name)}">${esc(e.name)}</span><span class="r">${fmtSize(e.size)}</span><span class="r">${fmtDay(e.mtime)}</span>
+          <button type="button" class="xsend" data-send="${i}" ${can ? "" : "disabled"} title="${can ? `Send to ${esc(to)}` : "Open a folder on the control first (sending must be switched on)"}">Send →</button></div>`).join("")
+      + (its.length > 300 ? `<div class="xmsg">${its.length - 300} more - use the filter.</div>` : "");
+}
+$("#xSrcQ").oninput = () => xSrcRender();
+$("#xSrcRefresh").onclick = () => xSrcLoad();
+$("#xSrcUp").onclick = () => { XS.sub = XS.sub.split("/").slice(0, -1).join("/"); $("#xSrcQ").value = ""; xSrcLoad(); };
+$("#xSrcList").onclick = async (e) => {
+  const b = e.target.closest("[data-send]");
+  if (b) {
+    const it = XS.items[+b.dataset.send], folder = X.path, file = XS.sub ? `${XS.sub}/${it.name}` : it.name;
+    if (!folder) return;
+    if (it.size > X.info.max_mb * 1048576) { const ui = xJobUi(`↑ ${it.name}`); ui.set(`larger than ${X.info.max_mb} MB`, 1, true); ui.done(15000); return; }
+    b.disabled = true;
+    await xSendOne(it.name, it.size, folder, () => xPost("/send-source", { machine: X.mid, folder, file }));
+    b.disabled = false;
+    if (X.mid && X.path === folder) xOpen(folder);
+    xLast();
+    return;
+  }
+  const row = e.target.closest(".xrow.d");
+  if (row) { XS.sub = XS.sub ? `${XS.sub}/${XS.items[+row.dataset.i].name}` : XS.items[+row.dataset.i].name; $("#xSrcQ").value = ""; xSrcLoad(); }
+};
 
 // ---- history
 async function xLast() {

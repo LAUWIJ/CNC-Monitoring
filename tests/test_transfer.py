@@ -390,3 +390,73 @@ def test_heidenhain_selected_program_may_be_replaced_in_manual_mode(tmp_path):
     st.update_live("f1", {"state": "IDLE", "mode": "MANUAL", "online": True, "program": "O1001",
                           "current_program": "O1001"}, False)
     assert svc._in_use("f1", "O1001") == "selected"                      # other controls: unchanged
+
+
+def test_default_folder_opens_first(tmp_path):
+    svc, st = _svc(tmp_path, transfer_folder="//CF_TEXT")
+    st.update_live("f1", {"state": "RUNNING", "program_path": "//CNC_MEM/USER/PATH1/O1234"}, False)
+    roots = svc.roots("f1")
+    assert roots[0]["path"] == "//CF_TEXT/" and roots[0]["default"] and roots[0]["configured"]
+    assert [r["path"] for r in roots].count("//CF_TEXT/") == 1
+    assert not any(r.get("default") for r in roots[1:])          # the program folder is not opened first now
+    svc2, st2 = _svc(tmp_path / "b", transfer_folder="//CNC_MEM/USER/PATH1/JOBS", _settings={})
+    os.makedirs(tmp_path / "b" / "demo_files" / "f1" / "CNC_MEM" / "USER" / "PATH1" / "JOBS", exist_ok=True)
+    r0 = svc2.roots("f1")[0]
+    assert r0 == {**r0, "path": "//CNC_MEM/USER/PATH1/JOBS/", "label": "Default folder", "note": "JOBS", "default": True}
+
+
+def test_heidenhain_default_folder_gets_backslash():
+    assert TransferService._folder("heidenhain", "TNC:\\nc_prog\\BMO") == "TNC:\\nc_prog\\BMO\\"
+    assert TransferService._folder("fanuc", "//CNC_MEM/USER/PATH1") == "//CNC_MEM/USER/PATH1/"
+    assert TransferService._folder("fanuc", "") == ""
+
+
+def test_server_folder_list_and_send(tmp_path, monkeypatch):
+    src = tmp_path / "share" / "Programma's DVF5000-BMO"
+    (src / "OLD").mkdir(parents=True)
+    (src / "O5555.NC").write_bytes(b"%\nO5555\nM30\n%\n")
+    (src / "~$lock.NC").write_bytes(b"x")
+    (src / "OLD" / "O1.NC").write_bytes(b"%\nO1\nM30\n%\n")
+    svc, st = _svc(tmp_path, transfer="send", program_source="N:\\Programma's DVF5000-BMO",
+                   _settings={"drives": {"N:": str(tmp_path / "share")}})
+    monkeypatch.setattr(os, "name", "posix")
+    assert svc.local_path("N:\\Programma's DVF5000-BMO") == str(src)
+    assert TransferService([], st, str(tmp_path / "x")).local_path("N:\\A\\b.nc") == "/mnt/n/A/b.nc"
+    r = svc.source_list("f1")
+    assert r["folder"] == "N:\\Programma's DVF5000-BMO" and [i["name"] for i in r["items"]] == ["OLD", "O5555.NC"]
+    assert [i["name"] for i in svc.source_list("f1", "OLD")["items"]] == ["O1.NC"]
+    for bad in ("..", "OLD/../..", "C:/x"):
+        with pytest.raises(ValueError):
+            svc.source_list("f1", bad)
+    j = _wait(svc, svc.start_send_source("f1", "//CNC_MEM/USER/PATH1/", "O5555.NC")["id"])
+    assert j["state"] == "done"
+    assert "O5555.NC" in [e["name"] for e in svc.list("f1", "//CNC_MEM/USER/PATH1/")]   # simulator keeps the file name
+    assert (src / "O5555.NC").exists()                               # the server's file is only read
+    with pytest.raises(ValueError):
+        svc.start_send_source("f1", "//CNC_MEM/USER/PATH1/", "OLD")   # a folder is not a file
+    assert svc.info("f1")["source"] == "N:\\Programma's DVF5000-BMO"
+
+
+def test_heidenhain_text_is_sent_with_nul_line_ends(tmp_path):
+    from machine_monitor.transfer import HeidenhainFiles
+    p = tmp_path / "55011-01A pos6 2e bewerking.h"
+    p.write_bytes(b"0 BEGIN PGM X MM\r\n23 CYCL DEF 247 DATUM SETTING ~\r\n  Q339=4 ; DATUM NUMBER\r\n24 END PGM X MM\r\n")
+    out = HeidenhainFiles.text_for_tnc(str(p))
+    assert open(out, "rb").read() == (b"0 BEGIN PGM X MM\x0023 CYCL DEF 247 DATUM SETTING ~\x00"
+                                      b"  Q339=4 ; DATUM NUMBER\x0024 END PGM X MM\x00")
+    lf = tmp_path / "lf.h"
+    lf.write_bytes(b"0 BEGIN PGM LF MM\n1 END PGM LF MM")       # LF only, no line end at the end
+    assert open(HeidenhainFiles.text_for_tnc(str(lf)), "rb").read() == b"0 BEGIN PGM LF MM\x001 END PGM LF MM\x00"
+
+    class Con:
+        def __init__(self):
+            self.sent = None
+        def send_file(self, local_path, remote_path, override_file, binary_mode):
+            self.sent = (open(local_path, "rb").read(), remote_path, binary_mode)
+            return True
+    h = HeidenhainFiles.__new__(HeidenhainFiles)
+    h.con = Con()
+    h.send(str(p), "TNC:\\PROGRAMMA", p.name)
+    assert b"\r" not in h.con.sent[0] and b"\n" not in h.con.sent[0] and h.con.sent[0].count(b"\x00") == 4
+    assert h.con.sent[1] == "TNC:\\PROGRAMMA\\" + p.name and not h.con.sent[2]
+    assert not os.path.exists(str(p) + ".tnc")                        # converted copy removed
