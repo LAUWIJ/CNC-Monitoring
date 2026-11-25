@@ -18,6 +18,7 @@ from machine_monitor.store import Store
 from machine_monitor.web import serve
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+OPCUA_PROBE_PORTS = (4840, 4848)          # OPC UA: 4840 standard, 4848 seen on some SINUMERIK/DMG setups
 
 NEW_CONFIG = """# Created by the monitor on its first start. Machines are added in the dashboard (Settings, top right)
 # or by hand - config.example.toml explains every setting.
@@ -285,7 +286,12 @@ def main():
     ap.add_argument("--config", default=os.path.join(HERE, "config.toml"))
     ap.add_argument("--demo", action="store_true", help="run config.demo.toml with simulated history")
     ap.add_argument("--backfill-hours", type=float, default=48)
-    ap.add_argument("--probe", metavar="MACHINE_ID", help="test the connection to one machine and exit")
+    ap.add_argument("--probe", metavar="MACHINE_ID_OR_IP",
+                    help="test the connection to one machine and exit. Also accepts an IP/host not in config; "
+                         "add --control (default mtconnect) and --port. OPC UA (siemens) tries 4840 and 4848.")
+    ap.add_argument("--browse", metavar="MACHINE_ID_OR_IP",
+                    help="OPC UA: list the whole address space (NodeId, name, value). For a server whose layout we "
+                         "don't know (e.g. DMG MORI MDC). Accepts an IP not in config; add --port (else tries 4840, 4848).")
     ap.add_argument("--fetch-plc", metavar="MACHINE_ID",
                     help="Heidenhain: copy the PLC text files (messages, symbols) once, read-only, to data/plc_<id>/")
     ap.add_argument("--probe-files", metavar="MACHINE_ID",
@@ -394,15 +400,48 @@ def main():
     # in capitals anyway
     _lower_control(cfg)
 
+    if args.browse:
+        from machine_monitor.drivers.siemens_opcua import SiemensOpcUaDriver
+        m = next((mm for mm in cfg.get("machine", []) if mm["id"] == args.browse), None)
+        if m is None:
+            m = {**cfg.get("defaults", {}), "id": "browse", "host": args.browse}
+            logging.info("browsing OPC UA on %s (not in config) ...", args.browse)
+        else:
+            logging.info("browsing OPC UA on %s (%s) ...", m["id"], m.get("host"))
+        ports = [m["port"]] if m.get("port") else (list(OPCUA_PROBE_PORTS) if not m.get("endpoint") else [None])
+        d = None
+        for p in ports:
+            d = SiemensOpcUaDriver({**m, "control": "siemens", **({"port": p} if p else {})})
+            try:
+                d.connect()
+                logging.info("browse | connected on port %s", p or "default")
+                break
+            except Exception as e:
+                logging.info("browse | port %s: %s: %s", p or "default", type(e).__name__, e)
+                d = None
+        if d is None:
+            sys.exit("could not connect to the OPC UA server")
+        try:
+            for line in d.browse_dump():
+                logging.info("browse | %s", line)
+        finally:
+            d.close()
+        return
+
     if args.probe:
         from machine_monitor.drivers import make_driver
-        m = next((m for m in cfg.get("machine", []) if m["id"] == args.probe), None)
-        if not m:
-            sys.exit(f"no machine with id '{args.probe}' in {cfg_path}")
-        logging.info("probing %s (%s, %s) ...", m["id"], m.get("name"), m.get("control"))
+        m = next((mm for mm in cfg.get("machine", []) if mm["id"] == args.probe), None)
+        if m is None:                             # not a config id: treat the argument as an IP / host / URL
+            control = (args.control or "mtconnect").lower()
+            m = {**cfg.get("defaults", {}), "id": "probe", "name": args.probe, "control": control,
+                 "host": args.probe}
+            if args.port:
+                m["port"] = args.port
+            logging.info("probing %s on %s (not in config) ...", control, args.probe)
+        else:
+            logging.info("probing %s (%s, %s) ...", m["id"], m.get("name"), m.get("control"))
         for noisy in ("LSV2 Client", "pyLSV2"):      # their warnings help when probing
             logging.getLogger(noisy).setLevel(logging.WARNING)
-        d = make_driver(m)
 
         class Live(list):          # print every probe line the moment it is produced
             def append(self, x):
@@ -417,13 +456,33 @@ def main():
                 self.extend(xs)
                 return self
 
-        if hasattr(d, "probe"):
-            d.probe(Live())
+        if hasattr(make_driver(m), "probe"):         # MTConnect: its own probe scans the common ports itself
+            make_driver(m).probe(Live())
             return
         out = Live()
+        control = m.get("control", "").lower()
+        if args.port:
+            ports = [args.port]
+        elif control in ("siemens", "sinumerik", "opcua") and not m.get("endpoint"):
+            ports = list(OPCUA_PROBE_PORTS)
+        else:
+            ports = [m.get("port")]                   # None -> the driver's own default port
+        d = None
+        for p in ports:
+            cand = make_driver({**m, **({"port": p} if p else {})})
+            try:
+                cand.connect()
+            except Exception as e:
+                out.append(f"port {p or 'default'}: could not connect: {type(e).__name__}: {e}")
+                cand.close()
+                continue
+            out.append("CONNECT OK" + (f" on port {p}" if p and len(ports) > 1 else ""))
+            d = cand
+            break
+        if d is None:
+            out.append("FAILED: no connection on port(s) " + ", ".join(str(p or "default") for p in ports))
+            return
         try:
-            d.connect()
-            out.append("CONNECT OK")
             out.append(repr(d.read()))
             # alarms/messages: 30 s live, so a message can be triggered (e.g. open the door) while it runs
             out.append("alarms/messages for 30 s (None = could not be read):")

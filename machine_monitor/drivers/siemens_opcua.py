@@ -391,6 +391,21 @@ class SiemensOpcUaDriver(Driver):
         """Diagnostics: endpoints/security offered by the control + every node read individually."""
         lines = lines if lines is not None else []
         from asyncua.sync import Client
+        # OPC UA is normally on 4840; some SINUMERIK/DMG setups use 4848. When no port was set explicitly,
+        # pick whichever is open (prefer the standard 4840) before the diagnostics below.
+        if self.cfg.get("port") is None and not self.cfg.get("endpoint"):
+            import socket as _sock
+            chosen = None
+            for cand in (4840, 4848):
+                try:
+                    with _sock.create_connection((self.cfg["host"], cand), timeout=3):
+                        chosen = cand
+                        break
+                except OSError as e:
+                    lines.append(f"OPC UA port {cand}: closed ({type(e).__name__})")
+            if chosen:
+                lines.append(f"OPC UA port {chosen}: open - using it")
+                self.cfg = dict(self.cfg, port=chosen)
         tok_names = {0: "Anonymous", 1: "UserName", 2: "Certificate", 3: "IssuedToken"}
         mode_names = {1: "None", 2: "Sign", 3: "SignAndEncrypt"}
         try:
@@ -531,6 +546,41 @@ class SiemensOpcUaDriver(Driver):
         if found:
             out.append(f'>>> put   node = "{found[0]}"   under [machine.cycle_signal] in config.toml')
         return out
+
+    def browse_dump(self, lines=None, max_folders=3000, max_vars=2000, time_budget=120.0) -> list:
+        """List the whole address space: every variable's NodeId, BrowseName path and current value. One browse
+        request per folder (names come with the reply); variables are read individually. For discovering a server
+        whose node layout we don't know (e.g. DMG MORI MDC: Channelinformation, OverallTimerAndCounter, ...)."""
+        import time as _t
+        lines = lines if lines is not None else []
+        c = self.client
+        t0, folders, nvars = _t.time(), 0, 0
+        skip = {"Server", "Types", "Views"}             # standard OPC UA plumbing, not machine data
+        queue = [(c.nodes.objects.nodeid, "", 0)]
+        while queue and folders < max_folders and nvars < max_vars and _t.time() - t0 < time_budget:
+            nid, path, depth = queue.pop(0)
+            try:
+                descs = c.get_node(nid).get_children_descriptions()
+            except Exception:
+                continue
+            folders += 1
+            for d in descs:
+                nm = d.BrowseName.Name
+                p = f"{path}/{nm}"
+                ncls = getattr(d.NodeClass, "value", d.NodeClass)
+                if ncls == 2:                           # Variable
+                    try:
+                        val = repr(c.get_node(d.NodeId).read_value())
+                        if len(val) > 100:
+                            val = val[:97] + "..."
+                    except Exception as e:
+                        val = f"<{type(e).__name__}>"
+                    lines.append(f"{d.NodeId.to_string():<46} {p} = {val}")
+                    nvars += 1
+                elif ncls == 1 and depth < 10 and nm not in skip:   # Object / folder
+                    queue.append((d.NodeId, p, depth + 1))
+        lines.append(f"-- {nvars} variables in {folders} folders ({_t.time() - t0:.0f} s)")
+        return lines
 
     def _dump(self, node, path, depth, count) -> list:
         """List variables under Machines/ (max depth 6, max 400 lines)."""

@@ -32,7 +32,7 @@ EXEC = {"ACTIVE": ExecState.RUNNING, "INTERRUPTED": ExecState.PAUSED, "FEED_HOLD
         "WAIT": ExecState.WAITING, "READY": ExecState.IDLE, "PROGRAM_COMPLETED": ExecState.IDLE}
 MODE = {"AUTOMATIC": Mode.AUTO, "SEMI_AUTOMATIC": Mode.AUTO, "MANUAL_DATA_INPUT": Mode.MDI,
         "MANUAL": Mode.MANUAL, "EDIT": Mode.MANUAL}
-COMMON_PORTS = (5000, 7878, 1391, 5001, 8082, 80)   # tried by --probe when the configured port doesn't answer
+COMMON_PORTS = (5000, 15404, 7878, 1391, 5001, 8082, 80)   # tried by --probe; 15404 = DMG MORI CELOS agent
 
 
 def _local(tag: str) -> str:

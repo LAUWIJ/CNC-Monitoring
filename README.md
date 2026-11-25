@@ -60,6 +60,7 @@ master copy; the Pi never needs access to the PC. Address of the Pi: `pi\pi_sett
 | `rollback_pi.bat` | back to the version before the last deploy |
 | `logs_pi.bat` | status + log of the Pi (copied to `data\monitor_pi.log`) |
 | `probe_pi.bat m9` | `--probe` for one machine, run on the Pi |
+| `probe_ip_pi.bat 192.168.1.34 siemens` | `--probe` for an IP **not in config** (control + optional port); OPC UA tries 4840 and 4848 |
 | `backup_pi.bat` | copy the newest nightly database backup to `backups\` on the PC |
 
 One `config.toml` serves both: on Linux a Windows `fwlib_path` is ignored and the right `.so` is picked
@@ -73,6 +74,10 @@ on the PC once the Pi runs. Dashboard: `http://<pi-address>:8080`.
 | Siemens 840D sl / ONE / 828D | OPC UA option enabled, user with read rights, port 4840 | `/Channel/ProgramInfo/selectedWorkPProg` | `actParts` / `totalParts` (whichever is enabled), `oldProgNetTimeCounter` |
 | Heidenhain TNC 530/620/640/TNC7 | LSV2 port 19000, DNC option (#18) | program stack *main* | status **FINISHED** / **CANCELLED** |
 | Fanuc 0i/16i/18i/30i/31i | FOCAS2 Ethernet (port 8193), FANUC FOCAS2 library (part no. A02B-0207-K737) | `cnc_pdf_rdmain` or `cnc_rdprgnum.mdata` | part counter macro #3901 |
+
+**Testing an IP not yet in config**: `python run.py --probe <ip> --control <siemens|mtconnect|fanuc|heidenhain> [--port N]` (or `probe_ip_pi.bat <ip> <control> [port]`). For Siemens OPC UA, leaving the port off tries 4840 then 4848.
+
+**Listing a whole OPC UA server** (when the node layout is unknown, e.g. a DMG MORI MDC / IoTconnector that doesn't use the native SINUMERIK paths): `python run.py --browse <ip>` (or `browse_opcua_pi.bat <ip>`) prints every NodeId, name and value. DMG MDC exposes its own address space (`Channelinformation/ExecutionState`, `OverallTimerAndCounter/PartCounter`, `MessagesAndAlarms/...`) rather than `/Channel/State/...`.
 
 **Siemens**: `python run.py --probe <id>` (or `probe.bat <id>`) tests login, security and every value and writes the result to `data\monitor.log`. Verified on DN Solutions DNM6700/NHP5000: `chanStatus` 1 = active, `workPNameLong` is only the workpiece folder, umati not offered. Otherwise check the node paths with UaExpert (free from Unified Automation). They can differ slightly by software version. Override them in `[machine.nodes]`.
 **Fanuc**: the part counter must count on M30 (parameter 6700/6710). If counting is switched off, the system falls back to reset detection.
